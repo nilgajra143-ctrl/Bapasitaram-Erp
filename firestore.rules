@@ -1,0 +1,923 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Security Primitives
+    // -------------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrapAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'nilgajra143@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || (
+        isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidVehicle(data) {
+      return data.keys().hasAll([
+        'registrationNumber', 'vehicleType', 'makeModel', 'capacityTons',
+        'driverName', 'driverPhone', 'fitnessExpiry', 'insuranceExpiry',
+        'permitExpiry', 'status', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'registrationNumber', 'vehicleType', 'makeModel', 'capacityTons',
+        'driverName', 'driverPhone', 'fitnessExpiry', 'insuranceExpiry',
+        'permitExpiry', 'pucExpiry', 'taxExpiry', 'status', 'notes',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.registrationNumber is string &&
+      data.registrationNumber.size() >= 4 &&
+      data.registrationNumber.size() <= 20 &&
+      data.registrationNumber.matches('^[A-Z0-9\\-\\s]{4,20}$') &&
+      data.vehicleType is string &&
+      data.vehicleType in ['Truck', 'Trailer', 'Container', 'Tanker', 'Tipper', 'LCV', 'Other'] &&
+      data.makeModel is string && data.makeModel.size() <= 80 &&
+      data.capacityTons is number && data.capacityTons >= 0 && data.capacityTons <= 200 &&
+      data.driverName is string && data.driverName.size() <= 80 &&
+      data.driverPhone is string && data.driverPhone.size() <= 20 &&
+      data.fitnessExpiry is string && data.fitnessExpiry.size() <= 20 &&
+      data.insuranceExpiry is string && data.insuranceExpiry.size() <= 20 &&
+      data.permitExpiry is string && data.permitExpiry.size() <= 20 &&
+      (!('pucExpiry' in data) || (data.pucExpiry is string && data.pucExpiry.size() <= 20)) &&
+      (!('taxExpiry' in data) || (data.taxExpiry is string && data.taxExpiry.size() <= 20)) &&
+      data.status is string && data.status in ['Available', 'On Trip', 'Maintenance', 'Inactive'] &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidParty(data) {
+      return data.keys().hasAll([
+        'partyName', 'partyType', 'contactPerson', 'phone', 'email', 'gstin',
+        'city', 'state', 'address', 'paymentTermsDays', 'status', 'notes',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'partyName', 'partyType', 'contactPerson', 'phone', 'email', 'gstin',
+        'city', 'state', 'address', 'paymentTermsDays', 'status', 'notes',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.partyName is string && data.partyName.size() >= 2 && data.partyName.size() <= 120 &&
+      data.partyType is string && data.partyType in ['Consignor', 'Consignee', 'Broker', 'Both'] &&
+      data.contactPerson is string && data.contactPerson.size() <= 80 &&
+      data.phone is string && data.phone.size() <= 20 &&
+      data.email is string && data.email.size() <= 120 &&
+      data.gstin is string && data.gstin.size() <= 20 &&
+      data.city is string && data.city.size() <= 80 &&
+      data.state is string && data.state.size() <= 80 &&
+      data.address is string && data.address.size() <= 300 &&
+      data.paymentTermsDays is number && data.paymentTermsDays >= 0 && data.paymentTermsDays <= 365 &&
+      data.status is string && data.status in ['Active', 'Inactive'] &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidTrip(data) {
+      return data.keys().hasAll([
+        'lrNumber', 'tripDate', 'vehicleId', 'vehicleNumber', 'partyId',
+        'partyName', 'driverName', 'origin', 'destination', 'material',
+        'weightTons', 'freightAmount', 'advanceReceived', 'dieselExpense',
+        'tollExpense', 'driverAllowance', 'otherExpense', 'balanceAmount',
+        'totalExpense', 'tripStatus', 'paymentStatus', 'podReceived',
+        'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'srNo', 'lrNumber', 'tripDate', 'vehicleId', 'vehicleNumber', 'partyId',
+        'partyName', 'driverName', 'origin', 'destination', 'containerNo',
+        'material', 'weightTons', 'freightAmount', 'advanceReceived',
+        'dieselQuantity', 'dieselRate', 'dieselExpense', 'tollExpense', 'driverAllowance',
+        'otherExpense', 'balanceAmount', 'totalExpense', 'tripStatus',
+        'paymentStatus', 'podReceived', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      (!('srNo' in data) || (data.srNo is string && data.srNo.size() <= 30)) &&
+      data.lrNumber is string && data.lrNumber.size() >= 1 && data.lrNumber.size() <= 40 &&
+      data.tripDate is string && data.tripDate.size() >= 4 && data.tripDate.size() <= 20 &&
+      data.vehicleId is string && isValidId(data.vehicleId) &&
+      data.vehicleNumber is string && data.vehicleNumber.size() >= 1 && data.vehicleNumber.size() <= 20 &&
+      data.partyId is string && isValidId(data.partyId) &&
+      data.partyName is string && data.partyName.size() >= 1 && data.partyName.size() <= 120 &&
+      data.driverName is string && data.driverName.size() <= 80 &&
+      data.origin is string && data.origin.size() >= 1 && data.origin.size() <= 100 &&
+      data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 100 &&
+      (!('containerNo' in data) || (data.containerNo is string && data.containerNo.size() <= 40)) &&
+      data.material is string && data.material.size() <= 100 &&
+      data.weightTons is number && data.weightTons >= 0 && data.weightTons <= 500 &&
+      data.freightAmount is number && data.freightAmount >= 0 && data.freightAmount <= 100000000 &&
+      data.advanceReceived is number && data.advanceReceived >= 0 && data.advanceReceived <= 100000000 &&
+      (!('dieselQuantity' in data) || (data.dieselQuantity is number && data.dieselQuantity >= 0 && data.dieselQuantity <= 100000)) &&
+      (!('dieselRate' in data) || (data.dieselRate is number && data.dieselRate >= 0 && data.dieselRate <= 10000)) &&
+      data.dieselExpense is number && data.dieselExpense >= 0 && data.dieselExpense <= 100000000 &&
+      data.tollExpense is number && data.tollExpense >= 0 && data.tollExpense <= 100000000 &&
+      data.driverAllowance is number && data.driverAllowance >= 0 && data.driverAllowance <= 100000000 &&
+      data.otherExpense is number && data.otherExpense >= 0 && data.otherExpense <= 100000000 &&
+      data.balanceAmount is number && data.balanceAmount >= -100000000 && data.balanceAmount <= 100000000 &&
+      data.totalExpense is number && data.totalExpense >= 0 && data.totalExpense <= 400000000 &&
+      data.tripStatus is string && data.tripStatus in ['Scheduled', 'In Transit', 'Delivered', 'Settled', 'Cancelled'] &&
+      data.paymentStatus is string && data.paymentStatus in ['Unpaid', 'Partial', 'Paid'] &&
+      data.podReceived is bool &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidDriver(data) {
+      return data.keys().hasAll([
+        'driverName', 'phone', 'licenseNumber', 'licenseExpiry',
+        'assignedVehicleId', 'assignedVehicleNumber', 'monthlySalary',
+        'openingBalance', 'status', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'driverName', 'phone', 'licenseNumber', 'licenseExpiry',
+        'assignedVehicleId', 'assignedVehicleNumber', 'monthlySalary',
+        'openingBalance', 'status', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.driverName is string && data.driverName.size() >= 2 && data.driverName.size() <= 80 &&
+      data.phone is string && data.phone.size() <= 20 &&
+      data.licenseNumber is string && data.licenseNumber.size() <= 40 &&
+      data.licenseExpiry is string && data.licenseExpiry.size() <= 20 &&
+      data.assignedVehicleId is string && data.assignedVehicleId.size() <= 128 &&
+      data.assignedVehicleNumber is string && data.assignedVehicleNumber.size() <= 20 &&
+      data.monthlySalary is number && data.monthlySalary >= 0 && data.monthlySalary <= 10000000 &&
+      data.openingBalance is number && data.openingBalance >= -10000000 && data.openingBalance <= 10000000 &&
+      data.status is string && data.status in ['Active', 'Inactive'] &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidDriverPayment(data) {
+      return data.keys().hasAll([
+        'driverId', 'driverName', 'vehicleId', 'vehicleNumber',
+        'paymentDate', 'paymentType', 'amount', 'paymentMode',
+        'referenceNo', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'driverId', 'driverName', 'vehicleId', 'vehicleNumber',
+        'paymentDate', 'paymentType', 'amount', 'paymentMode',
+        'referenceNo', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.driverId is string && isValidId(data.driverId) &&
+      data.driverName is string && data.driverName.size() >= 1 && data.driverName.size() <= 80 &&
+      data.vehicleId is string && data.vehicleId.size() <= 128 &&
+      data.vehicleNumber is string && data.vehicleNumber.size() <= 20 &&
+      data.paymentDate is string && data.paymentDate.size() >= 4 && data.paymentDate.size() <= 20 &&
+      data.paymentType is string && data.paymentType in ['Salary Due', 'Salary Paid', 'Advance', 'Allowance', 'Deduction'] &&
+      data.amount is number && data.amount >= 0 && data.amount <= 100000000 &&
+      data.paymentMode is string && data.paymentMode in ['Cash', 'Bank Transfer', 'UPI', 'Cheque', 'Ledger Adjustment'] &&
+      data.referenceNo is string && data.referenceNo.size() <= 60 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidPartyPayment(data) {
+      return data.keys().hasAll([
+        'partyId', 'partyName', 'paymentDate', 'paymentType',
+        'amount', 'paymentMode', 'referenceNo', 'notes',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'partyId', 'partyName', 'tripId', 'tripLrNumber', 'paymentDate',
+        'paymentType', 'amount', 'paymentMode', 'referenceNo', 'notes',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.partyId is string && isValidId(data.partyId) &&
+      data.partyName is string && data.partyName.size() >= 1 && data.partyName.size() <= 120 &&
+      (!('tripId' in data) || (data.tripId is string && data.tripId.size() <= 128)) &&
+      (!('tripLrNumber' in data) || (data.tripLrNumber is string && data.tripLrNumber.size() <= 40)) &&
+      data.paymentDate is string && data.paymentDate.size() >= 4 && data.paymentDate.size() <= 20 &&
+      data.paymentType is string && data.paymentType in ['Payment Received', 'Advance', 'Deduction'] &&
+      data.amount is number && data.amount > 0 && data.amount <= 100000000 &&
+      data.paymentMode is string && data.paymentMode in ['Cash', 'Bank Transfer', 'UPI', 'Cheque', 'Ledger Adjustment'] &&
+      data.referenceNo is string && data.referenceNo.size() <= 60 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidMaintenanceRecord(data) {
+      return data.keys().hasAll([
+        'expenseDate', 'vehicleId', 'vehicleNumber', 'category',
+        'vendorName', 'description', 'dieselQuantity', 'amount',
+        'billNo', 'odometerKm', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'expenseDate', 'vehicleId', 'vehicleNumber', 'category',
+        'vendorName', 'description', 'dieselQuantity', 'amount',
+        'billNo', 'odometerKm', 'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.expenseDate is string && data.expenseDate.size() >= 4 && data.expenseDate.size() <= 20 &&
+      data.vehicleId is string && isValidId(data.vehicleId) &&
+      data.vehicleNumber is string && data.vehicleNumber.size() >= 1 && data.vehicleNumber.size() <= 20 &&
+      data.category is string && data.category in [
+        'Maintenance & Repair', 'Tyre & Alignment', 'Spare Parts',
+        'Diesel', 'Toll', 'RTO & Permit Tax', 'Other Expense'
+      ] &&
+      data.vendorName is string && data.vendorName.size() <= 100 &&
+      data.description is string && data.description.size() >= 1 && data.description.size() <= 200 &&
+      data.dieselQuantity is number && data.dieselQuantity >= 0 && data.dieselQuantity <= 100000 &&
+      data.amount is number && data.amount >= 0 && data.amount <= 100000000 &&
+      data.billNo is string && data.billNo.size() <= 50 &&
+      data.odometerKm is number && data.odometerKm >= 0 && data.odometerKm <= 10000000 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidBill(data) {
+      return data.keys().hasAll([
+        'billNumber', 'billDate', 'partyId', 'partyName', 'partyGstin',
+        'partyAddress', 'tripIds', 'lineItems', 'freightTotal', 'expenseTotal',
+        'advanceTotal', 'netPayable', 'amountInWords', 'bankDetails', 'status',
+        'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'billNumber', 'billDate', 'partyId', 'partyName', 'partyGstin',
+        'partyAddress', 'tripIds', 'lineItems', 'freightTotal', 'expenseTotal',
+        'advanceTotal', 'netPayable', 'amountInWords', 'bankDetails', 'status',
+        'notes', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.billNumber is string && data.billNumber.size() >= 1 && data.billNumber.size() <= 50 &&
+      data.billDate is string && data.billDate.size() >= 4 && data.billDate.size() <= 20 &&
+      data.partyId is string && isValidId(data.partyId) &&
+      data.partyName is string && data.partyName.size() >= 1 && data.partyName.size() <= 120 &&
+      data.partyGstin is string && data.partyGstin.size() <= 20 &&
+      data.partyAddress is string && data.partyAddress.size() <= 300 &&
+      data.tripIds is list && data.tripIds.size() >= 1 && data.tripIds.size() <= 50 &&
+      data.tripIds[0] is string &&
+      data.lineItems is list && data.lineItems.size() >= 1 && data.lineItems.size() <= 50 &&
+      data.lineItems[0] is map &&
+      data.freightTotal is number && data.freightTotal >= 0 && data.freightTotal <= 1000000000 &&
+      data.expenseTotal is number && data.expenseTotal >= 0 && data.expenseTotal <= 1000000000 &&
+      data.advanceTotal is number && data.advanceTotal >= 0 && data.advanceTotal <= 1000000000 &&
+      data.netPayable is number && data.netPayable >= -1000000000 && data.netPayable <= 1000000000 &&
+      data.amountInWords is string && data.amountInWords.size() <= 250 &&
+      data.bankDetails is string && data.bankDetails.size() <= 500 &&
+      data.status is string && data.status in ['Draft', 'Issued', 'Paid', 'Cancelled'] &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidCompanySettings(data) {
+      return data.keys().hasAll([
+        'companyName', 'address', 'gstin', 'pan', 'phone', 'email',
+        'bankName', 'accountHolderName', 'accountNumber', 'ifscCode',
+        'branchName', 'billPrefix', 'nextBillSeq', 'terms', 'ownerId', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'companyName', 'address', 'gstin', 'pan', 'phone', 'email',
+        'bankName', 'accountHolderName', 'accountNumber', 'ifscCode',
+        'branchName', 'billPrefix', 'nextBillSeq', 'defaultDieselRate', 'terms', 'ownerId', 'updatedAt'
+      ]) &&
+      data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 120 &&
+      data.address is string && data.address.size() <= 300 &&
+      data.gstin is string && data.gstin.size() <= 20 &&
+      data.pan is string && data.pan.size() <= 20 &&
+      data.phone is string && data.phone.size() <= 40 &&
+      data.email is string && data.email.size() <= 120 &&
+      data.bankName is string && data.bankName.size() <= 100 &&
+      data.accountHolderName is string && data.accountHolderName.size() <= 120 &&
+      data.accountNumber is string && data.accountNumber.size() <= 40 &&
+      data.ifscCode is string && data.ifscCode.size() <= 20 &&
+      data.branchName is string && data.branchName.size() <= 100 &&
+      data.billPrefix is string && data.billPrefix.size() <= 30 &&
+      data.nextBillSeq is number && data.nextBillSeq >= 1 && data.nextBillSeq <= 1000000 &&
+      (!('defaultDieselRate' in data) || (data.defaultDieselRate is number && data.defaultDieselRate >= 0 && data.defaultDieselRate <= 10000)) &&
+      data.terms is string && data.terms.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['email', 'displayName', 'role', 'addedBy', 'createdAt']) &&
+        data.keys().hasOnly(['email', 'displayName', 'role', 'addedBy', 'createdAt']) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.displayName is string && data.displayName.size() <= 80 &&
+        data.role is string && data.role == 'admin' &&
+        data.addedBy is string && isValidId(data.addedBy) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidErpUser(data) {
+      return data.keys().hasAll([
+        'email', 'displayName', 'role', 'status',
+        'canEditTrips', 'canDeleteRecords', 'canManageBilling',
+        'canImportExcel', 'canExportData', 'canManageMasters',
+        'addedBy', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'email', 'displayName', 'role', 'status',
+        'canEditTrips', 'canDeleteRecords', 'canManageBilling',
+        'canImportExcel', 'canExportData', 'canManageMasters',
+        'addedBy', 'createdAt', 'updatedAt'
+      ]) &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+      data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+      data.role is string && data.role in ['admin', 'employee'] &&
+      data.status is string && data.status in ['Active', 'Suspended'] &&
+      data.canEditTrips is bool &&
+      data.canDeleteRecords is bool &&
+      data.canManageBilling is bool &&
+      data.canImportExcel is bool &&
+      data.canExportData is bool &&
+      data.canManageMasters is bool &&
+      data.addedBy is string && isValidId(data.addedBy) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+        'actorEmail', 'actorRole', 'action', 'module',
+        'recordId', 'summary', 'ownerId', 'createdAt'
+      ]) && data.keys().hasOnly([
+        'actorEmail', 'actorRole', 'action', 'module',
+        'recordId', 'summary', 'ownerId', 'createdAt'
+      ]) &&
+      data.actorEmail is string && data.actorEmail.size() <= 120 &&
+      data.actorRole is string && data.actorRole in ['admin', 'employee'] &&
+      data.action is string && data.action in ['CREATE', 'UPDATE', 'DELETE', 'IMPORT', 'EXPORT', 'BACKUP', 'RESTORE', 'BILL'] &&
+      data.module is string && data.module.size() >= 1 && data.module.size() <= 50 &&
+      data.recordId is string && data.recordId.size() <= 128 &&
+      data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 300 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidImportBatch(data) {
+      return data.keys().hasAll([
+        'fileName', 'sheetNames', 'vehiclesCreated', 'partiesCreated',
+        'tripsCreated', 'sheetRowsSaved', 'duplicatesSkipped',
+        'karjaExcludedCount', 'ownerId', 'createdAt'
+      ]) && data.keys().hasOnly([
+        'fileName', 'sheetNames', 'vehiclesCreated', 'partiesCreated',
+        'tripsCreated', 'sheetRowsSaved', 'duplicatesSkipped',
+        'karjaExcludedCount', 'ownerId', 'createdAt'
+      ]) &&
+      data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 160 &&
+      data.sheetNames is list && data.sheetNames.size() >= 1 && data.sheetNames.size() <= 20 &&
+      data.sheetNames[0] is string &&
+      data.vehiclesCreated is number && data.vehiclesCreated >= 0 && data.vehiclesCreated <= 10000 &&
+      data.partiesCreated is number && data.partiesCreated >= 0 && data.partiesCreated <= 10000 &&
+      data.tripsCreated is number && data.tripsCreated >= 0 && data.tripsCreated <= 50000 &&
+      data.sheetRowsSaved is number && data.sheetRowsSaved >= 0 && data.sheetRowsSaved <= 50000 &&
+      data.duplicatesSkipped is number && data.duplicatesSkipped >= 0 && data.duplicatesSkipped <= 50000 &&
+      data.karjaExcludedCount is number && data.karjaExcludedCount >= 0 && data.karjaExcludedCount <= 50000 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp;
+    }
+
+    function isValidImportedSheetRow(data) {
+      return data.keys().hasAll([
+        'batchId', 'sheetName', 'rowIndex', 'targetModule', 'mappedRecordId',
+        'rowSignature', 'originalDate', 'primaryAmount', 'notes',
+        'columnsOrder', 'cells', 'ownerId', 'createdAt'
+      ]) && data.keys().hasOnly([
+        'batchId', 'sheetName', 'rowIndex', 'targetModule', 'mappedRecordId',
+        'rowSignature', 'originalDate', 'primaryAmount', 'notes',
+        'columnsOrder', 'cells', 'ownerId', 'createdAt'
+      ]) &&
+      data.batchId is string && isValidId(data.batchId) &&
+      data.sheetName is string && data.sheetName.size() >= 1 && data.sheetName.size() <= 80 &&
+      data.rowIndex is number && data.rowIndex >= 1 && data.rowIndex <= 100000 &&
+      data.targetModule is string && data.targetModule in ['vehicles', 'parties', 'trips', 'ledger-summary'] &&
+      data.mappedRecordId is string && data.mappedRecordId.size() <= 128 &&
+      data.rowSignature is string && data.rowSignature.size() >= 1 && data.rowSignature.size() <= 200 &&
+      data.originalDate is string && data.originalDate.size() <= 30 &&
+      data.primaryAmount is number && data.primaryAmount >= -1000000000 && data.primaryAmount <= 1000000000 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.columnsOrder is list && data.columnsOrder.size() >= 1 && data.columnsOrder.size() <= 40 &&
+      data.columnsOrder[0] is string &&
+      data.cells is list && data.cells.size() >= 1 && data.cells.size() <= 40 &&
+      data.cells[0] is map &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // Admins & RBAC Users Collections (Bootstrap Admin Managed)
+    // -------------------------------------------------------------------------
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isBootstrapAdmin() || (isVerifiedUser() && request.auth.uid == adminId));
+      allow list: if isBootstrapAdmin();
+      allow create: if isBootstrapAdmin() &&
+        isValidId(adminId) &&
+        isValidAdminUser(incoming()) &&
+        incoming().addedBy == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isBootstrapAdmin() && isValidId(adminId);
+    }
+
+    match /erpUsers/{userId} {
+      allow get: if isValidId(userId) && (
+        isAdmin() || (isVerifiedUser() && existing().email == request.auth.token.email)
+      );
+      allow list: if isBootstrapAdmin() || (
+        isVerifiedUser() && existing().email == request.auth.token.email
+      );
+      allow create: if isBootstrapAdmin() &&
+        isValidId(userId) &&
+        isValidErpUser(incoming()) &&
+        incoming().addedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isBootstrapAdmin() &&
+        isValidId(userId) &&
+        isValidErpUser(incoming()) &&
+        incoming().addedBy == existing().addedBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'role', 'status',
+          'canEditTrips', 'canDeleteRecords', 'canManageBilling',
+          'canImportExcel', 'canExportData', 'canManageMasters',
+          'updatedAt'
+        ]);
+      allow delete: if isBootstrapAdmin() && isValidId(userId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Vehicles Collection
+    // -------------------------------------------------------------------------
+    match /vehicles/{vehicleId} {
+      allow get: if isValidId(vehicleId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(vehicleId) &&
+        isValidVehicle(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(vehicleId) &&
+        isValidVehicle(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'registrationNumber', 'vehicleType', 'makeModel', 'capacityTons',
+                'driverName', 'driverPhone', 'fitnessExpiry', 'insuranceExpiry',
+                'permitExpiry', 'pucExpiry', 'taxExpiry', 'status', 'notes', 'updatedAt'
+              ]) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+            )
+          )
+        );
+      allow delete: if isValidId(vehicleId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Parties Collection (PII Restricted)
+    // -------------------------------------------------------------------------
+    match /parties/{partyId} {
+      allow get: if isValidId(partyId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(partyId) &&
+        isValidParty(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(partyId) &&
+        isValidParty(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'partyName', 'partyType', 'contactPerson', 'phone', 'email', 'gstin',
+              'city', 'state', 'address', 'paymentTermsDays', 'status', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(partyId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Party Payments Collection (Ledger Receipts, Advances & Referential Check)
+    // -------------------------------------------------------------------------
+    match /partyPayments/{paymentId} {
+      allow get: if isValidId(paymentId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(paymentId) &&
+        isValidPartyPayment(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/parties/$(incoming().partyId)) &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/parties/$(incoming().partyId)).data.ownerId == request.auth.uid
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(paymentId) &&
+        isValidPartyPayment(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().partyId == existing().partyId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'partyName', 'tripId', 'tripLrNumber', 'paymentDate',
+              'paymentType', 'amount', 'paymentMode', 'referenceNo', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(paymentId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Trips Collection (Financial Ledger + Referential Integrity)
+    // -------------------------------------------------------------------------
+    match /trips/{tripId} {
+      allow get: if isValidId(tripId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(tripId) &&
+        isValidTrip(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/vehicles/$(incoming().vehicleId)) &&
+        exists(/databases/$(database)/documents/parties/$(incoming().partyId)) &&
+        (
+          isAdmin() || (
+            get(/databases/$(database)/documents/vehicles/$(incoming().vehicleId)).data.ownerId == request.auth.uid &&
+            get(/databases/$(database)/documents/parties/$(incoming().partyId)).data.ownerId == request.auth.uid
+          )
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(tripId) &&
+        isValidTrip(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            !(existing().tripStatus in ['Settled', 'Cancelled']) &&
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'tripStatus', 'podReceived', 'notes', 'updatedAt'
+              ]) ||
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'advanceReceived', 'balanceAmount', 'paymentStatus',
+                'dieselQuantity', 'dieselRate', 'dieselExpense', 'tollExpense', 'driverAllowance',
+                'otherExpense', 'totalExpense', 'tripStatus', 'podReceived',
+                'notes', 'updatedAt'
+              ]) ||
+              (
+                incoming().vehicleId == existing().vehicleId &&
+                incoming().partyId == existing().partyId &&
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'srNo', 'lrNumber', 'tripDate', 'vehicleNumber', 'partyName',
+                  'driverName', 'origin', 'destination', 'containerNo', 'material',
+                  'weightTons', 'freightAmount', 'advanceReceived', 'dieselQuantity',
+                  'dieselRate', 'dieselExpense', 'tollExpense', 'driverAllowance', 'otherExpense',
+                  'balanceAmount', 'totalExpense', 'tripStatus', 'paymentStatus',
+                  'podReceived', 'notes', 'updatedAt'
+                ])
+              )
+            )
+          )
+        );
+      allow delete: if isValidId(tripId) && (
+        isAdmin() || (
+          isVerifiedUser() &&
+          existing().ownerId == request.auth.uid &&
+          !(existing().tripStatus in ['Settled', 'Cancelled'])
+        )
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Drivers & Driver Payments Collections
+    // -------------------------------------------------------------------------
+    match /drivers/{driverId} {
+      allow get: if isValidId(driverId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(driverId) &&
+        isValidDriver(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(driverId) &&
+        isValidDriver(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'driverName', 'phone', 'licenseNumber', 'licenseExpiry',
+              'assignedVehicleId', 'assignedVehicleNumber', 'monthlySalary',
+              'openingBalance', 'status', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(driverId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    match /driverPayments/{paymentId} {
+      allow get: if isValidId(paymentId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(paymentId) &&
+        isValidDriverPayment(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/drivers/$(incoming().driverId)) &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/drivers/$(incoming().driverId)).data.ownerId == request.auth.uid
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(paymentId) &&
+        isValidDriverPayment(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().driverId == existing().driverId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'driverName', 'vehicleId', 'vehicleNumber', 'paymentDate',
+              'paymentType', 'amount', 'paymentMode', 'referenceNo', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(paymentId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Maintenance & Operational Expense Records Collection
+    // -------------------------------------------------------------------------
+    match /maintenanceRecords/{recordId} {
+      allow get: if isValidId(recordId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(recordId) &&
+        isValidMaintenanceRecord(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/vehicles/$(incoming().vehicleId)) &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/vehicles/$(incoming().vehicleId)).data.ownerId == request.auth.uid
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(recordId) &&
+        isValidMaintenanceRecord(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().vehicleId == existing().vehicleId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'expenseDate', 'vehicleNumber', 'category', 'vendorName',
+              'description', 'dieselQuantity', 'amount', 'billNo',
+              'odometerKm', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(recordId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Bills & Company Settings Collections
+    // -------------------------------------------------------------------------
+    match /bills/{billId} {
+      allow get: if isValidId(billId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(billId) &&
+        isValidBill(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/parties/$(incoming().partyId)) &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/parties/$(incoming().partyId)).data.ownerId == request.auth.uid
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(billId) &&
+        isValidBill(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().partyId == existing().partyId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            !(existing().status in ['Paid', 'Cancelled']) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'billDate', 'status', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(billId) && (
+        isAdmin() || (
+          isVerifiedUser() &&
+          existing().ownerId == request.auth.uid &&
+          !(existing().status in ['Paid', 'Cancelled'])
+        )
+      );
+    }
+
+    match /companySettings/{settingId} {
+      allow get: if isValidId(settingId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(settingId) &&
+        isValidCompanySettings(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(settingId) &&
+        isValidCompanySettings(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'companyName', 'address', 'gstin', 'pan', 'phone', 'email',
+              'bankName', 'accountHolderName', 'accountNumber', 'ifscCode',
+              'branchName', 'billPrefix', 'nextBillSeq', 'defaultDieselRate', 'terms', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Immutable Audit Logs Collection
+    // -------------------------------------------------------------------------
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(logId) &&
+        isValidAuditLog(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Import Batches & Preserved Sheet Rows Collections
+    // -------------------------------------------------------------------------
+    match /importBatches/{batchId} {
+      allow get: if isValidId(batchId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(batchId) &&
+        isValidImportBatch(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(batchId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+
+    match /importedSheetRows/{rowId} {
+      allow get: if isValidId(rowId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(rowId) &&
+        isValidImportedSheetRow(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/importBatches/$(incoming().batchId)) &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/importBatches/$(incoming().batchId)).data.ownerId == request.auth.uid
+        );
+      allow update: if false;
+      allow delete: if isValidId(rowId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+    }
+  }
+}

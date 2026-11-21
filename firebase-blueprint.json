@@ -1,0 +1,1233 @@
+{
+  "entities": {
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Fleet vehicle registered under BAPASITARAM ENTERPRISE.",
+      "type": "object",
+      "properties": {
+        "registrationNumber": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20,
+          "pattern": "^[A-Z0-9\\-\\s]{4,20}$",
+          "description": "Official RTO vehicle registration number (e.g. GJ-03-BW-4521)."
+        },
+        "vehicleType": {
+          "type": "string",
+          "enum": ["Truck", "Trailer", "Container", "Tanker", "Tipper", "LCV", "Other"],
+          "description": "Commercial vehicle body category."
+        },
+        "makeModel": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Manufacturer and model name."
+        },
+        "capacityTons": {
+          "type": "number",
+          "description": "Payload capacity in metric tons."
+        },
+        "driverName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Assigned primary driver full name."
+        },
+        "driverPhone": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Primary driver contact number."
+        },
+        "fitnessExpiry": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Fitness certificate expiry date (YYYY-MM-DD)."
+        },
+        "insuranceExpiry": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Insurance policy expiry date (YYYY-MM-DD)."
+        },
+        "permitExpiry": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "National or state permit expiry date (YYYY-MM-DD)."
+        },
+        "pucExpiry": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "PUC certificate expiry date (YYYY-MM-DD)."
+        },
+        "taxExpiry": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Road / Permit tax expiry date (YYYY-MM-DD)."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Available", "On Trip", "Maintenance", "Inactive"],
+          "description": "Current operational status of the vehicle."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Operational remarks for the vehicle."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Authenticated user UID owning the record."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp."
+        }
+      },
+      "required": [
+        "registrationNumber",
+        "vehicleType",
+        "makeModel",
+        "capacityTons",
+        "driverName",
+        "driverPhone",
+        "fitnessExpiry",
+        "insuranceExpiry",
+        "permitExpiry",
+        "status",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Party": {
+      "title": "Party",
+      "description": "Client, consignor, consignee, or transport broker account.",
+      "type": "object",
+      "properties": {
+        "partyName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Registered business or party name."
+        },
+        "partyType": {
+          "type": "string",
+          "enum": ["Consignor", "Consignee", "Broker", "Both"],
+          "description": "Commercial role of the party."
+        },
+        "contactPerson": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Primary billing or dispatch contact person."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Primary contact telephone number."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Billing email address."
+        },
+        "gstin": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "15-character Indian GSTIN if registered."
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "City of operation."
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "State of operation."
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Registered billing or office address."
+        },
+        "paymentTermsDays": {
+          "type": "number",
+          "description": "Agreed credit period in days."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Inactive"],
+          "description": "Account operational status."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Internal credit or dispatch notes."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Authenticated user UID owning the record."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp."
+        }
+      },
+      "required": [
+        "partyName",
+        "partyType",
+        "contactPerson",
+        "phone",
+        "email",
+        "gstin",
+        "city",
+        "state",
+        "address",
+        "paymentTermsDays",
+        "status",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "Transport trip dispatch and INR freight ledger entry aligned with Excel workbook columns.",
+      "type": "object",
+      "properties": {
+        "srNo": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Original Excel Sr No."
+        },
+        "lrNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Lorry Receipt (LR) / Bilty number."
+        },
+        "tripDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20,
+          "description": "Dispatch date (YYYY-MM-DD)."
+        },
+        "vehicleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Referenced vehicle document ID."
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "description": "Vehicle registration number snapshot."
+        },
+        "partyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Referenced party document ID."
+        },
+        "partyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Party name snapshot."
+        },
+        "driverName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Driver assigned for the trip."
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Loading origin (From)."
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Unloading destination (To)."
+        },
+        "containerNo": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Container number from Excel workbook."
+        },
+        "material": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Cargo commodity or material description."
+        },
+        "weightTons": {
+          "type": "number",
+          "description": "Consignment weight in metric tons."
+        },
+        "freightAmount": {
+          "type": "number",
+          "description": "Total Rate / Freight charge in INR."
+        },
+        "advanceReceived": {
+          "type": "number",
+          "description": "Jama / Advance received in INR."
+        },
+        "dieselQuantity": {
+          "type": "number",
+          "description": "Diesel Quantity in Liters (kept strictly separate from Diesel Amount)."
+        },
+        "dieselRate": {
+          "type": "number",
+          "description": "Diesel rate per liter in INR snapshot at trip entry time."
+        },
+        "dieselExpense": {
+          "type": "number",
+          "description": "Diesel Amount in INR."
+        },
+        "tollExpense": {
+          "type": "number",
+          "description": "Toll expense in INR."
+        },
+        "driverAllowance": {
+          "type": "number",
+          "description": "Driver bhatta / allowance in INR."
+        },
+        "otherExpense": {
+          "type": "number",
+          "description": "Kharcha / other trip expense in INR."
+        },
+        "balanceAmount": {
+          "type": "number",
+          "description": "Hisab / Balance receivable in INR."
+        },
+        "totalExpense": {
+          "type": "number",
+          "description": "Sum of trip expenses in INR."
+        },
+        "tripStatus": {
+          "type": "string",
+          "enum": ["Scheduled", "In Transit", "Delivered", "Settled", "Cancelled"],
+          "description": "Current trip lifecycle stage."
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["Unpaid", "Partial", "Paid"],
+          "description": "Freight settlement state."
+        },
+        "podReceived": {
+          "type": "boolean",
+          "description": "Whether Proof of Delivery (POD) has been received."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Note / trip remarks."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Authenticated user UID owning the record."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last update timestamp."
+        }
+      },
+      "required": [
+        "lrNumber",
+        "tripDate",
+        "vehicleId",
+        "vehicleNumber",
+        "partyId",
+        "partyName",
+        "driverName",
+        "origin",
+        "destination",
+        "material",
+        "weightTons",
+        "freightAmount",
+        "advanceReceived",
+        "dieselExpense",
+        "tollExpense",
+        "driverAllowance",
+        "otherExpense",
+        "balanceAmount",
+        "totalExpense",
+        "tripStatus",
+        "paymentStatus",
+        "podReceived",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Driver": {
+      "title": "Driver",
+      "description": "Driver profile, salary terms, and assigned vehicle.",
+      "type": "object",
+      "properties": {
+        "driverName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Full name of driver."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Driver phone number."
+        },
+        "licenseNumber": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Driving license number."
+        },
+        "licenseExpiry": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "License expiry date (YYYY-MM-DD)."
+        },
+        "assignedVehicleId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional assigned vehicle document ID."
+        },
+        "assignedVehicleNumber": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Assigned vehicle registration snapshot."
+        },
+        "monthlySalary": {
+          "type": "number",
+          "description": "Agreed monthly fixed salary in INR."
+        },
+        "openingBalance": {
+          "type": "number",
+          "description": "Opening payable balance in INR."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Inactive"],
+          "description": "Employment status."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Driver notes or KYC remarks."
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Authenticated user UID owning the record."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "driverName",
+        "phone",
+        "licenseNumber",
+        "licenseExpiry",
+        "assignedVehicleId",
+        "assignedVehicleNumber",
+        "monthlySalary",
+        "openingBalance",
+        "status",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DriverPayment": {
+      "title": "DriverPayment",
+      "description": "Driver salary, advance, allowance, or settlement ledger entry.",
+      "type": "object",
+      "properties": {
+        "driverId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "driverName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "vehicleId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "paymentDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "paymentType": {
+          "type": "string",
+          "enum": ["Salary Due", "Salary Paid", "Advance", "Allowance", "Deduction"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "paymentMode": {
+          "type": "string",
+          "enum": ["Cash", "Bank Transfer", "UPI", "Cheque", "Ledger Adjustment"]
+        },
+        "referenceNo": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "driverId",
+        "driverName",
+        "vehicleId",
+        "vehicleNumber",
+        "paymentDate",
+        "paymentType",
+        "amount",
+        "paymentMode",
+        "referenceNo",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PartyPayment": {
+      "title": "PartyPayment",
+      "description": "Party payment receipt, advance, or ledger adjustment entry.",
+      "type": "object",
+      "properties": {
+        "partyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "tripId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "tripLrNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "paymentDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "paymentType": {
+          "type": "string",
+          "enum": ["Payment Received", "Advance", "Deduction"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "paymentMode": {
+          "type": "string",
+          "enum": ["Cash", "Bank Transfer", "UPI", "Cheque", "Ledger Adjustment"]
+        },
+        "referenceNo": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "partyId",
+        "partyName",
+        "paymentDate",
+        "paymentType",
+        "amount",
+        "paymentMode",
+        "referenceNo",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MaintenanceRecord": {
+      "title": "MaintenanceRecord",
+      "description": "Vehicle maintenance, repair, standalone diesel/toll, or operational expense record.",
+      "type": "object",
+      "properties": {
+        "expenseDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "vehicleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "Maintenance & Repair",
+            "Tyre & Alignment",
+            "Spare Parts",
+            "Diesel",
+            "Toll",
+            "RTO & Permit Tax",
+            "Other Expense"
+          ]
+        },
+        "vendorName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "dieselQuantity": {
+          "type": "number"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "billNo": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "odometerKm": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "expenseDate",
+        "vehicleId",
+        "vehicleNumber",
+        "category",
+        "vendorName",
+        "description",
+        "dieselQuantity",
+        "amount",
+        "billNo",
+        "odometerKm",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "Generated transport freight bill / invoice for a party.",
+      "type": "object",
+      "properties": {
+        "billNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "billDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "partyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "partyName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "partyGstin": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "partyAddress": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "tripIds": {
+          "type": "array",
+          "description": "Bounded list of trip document IDs included in this bill (max 50)."
+        },
+        "lineItems": {
+          "type": "array",
+          "description": "Bounded snapshot of trip rows included in this bill (max 50)."
+        },
+        "freightTotal": {
+          "type": "number"
+        },
+        "expenseTotal": {
+          "type": "number"
+        },
+        "advanceTotal": {
+          "type": "number"
+        },
+        "netPayable": {
+          "type": "number"
+        },
+        "amountInWords": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "bankDetails": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Draft", "Issued", "Paid", "Cancelled"]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "billNumber",
+        "billDate",
+        "partyId",
+        "partyName",
+        "partyGstin",
+        "partyAddress",
+        "tripIds",
+        "lineItems",
+        "freightTotal",
+        "expenseTotal",
+        "advanceTotal",
+        "netPayable",
+        "amountInWords",
+        "bankDetails",
+        "status",
+        "notes",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CompanySettings": {
+      "title": "CompanySettings",
+      "description": "Company billing, bank details, and numbering profile.",
+      "type": "object",
+      "properties": {
+        "companyName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "gstin": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "pan": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "accountHolderName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "ifscCode": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "branchName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "billPrefix": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "nextBillSeq": {
+          "type": "number"
+        },
+        "defaultDieselRate": {
+          "type": "number",
+          "description": "Admin-configured default diesel rate per liter in INR (e.g., 98.34)."
+        },
+        "terms": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "companyName",
+        "address",
+        "gstin",
+        "pan",
+        "phone",
+        "email",
+        "bankName",
+        "accountHolderName",
+        "accountNumber",
+        "ifscCode",
+        "branchName",
+        "billPrefix",
+        "nextBillSeq",
+        "terms",
+        "ownerId",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized ERP administrator record.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Admin Google account email."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Admin full name."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Role identifier."
+        },
+        "addedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the bootstrap admin who authorized this user."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": ["email", "displayName", "role", "addedBy", "createdAt"]
+    },
+    "ErpUser": {
+      "title": "ErpUser",
+      "description": "Role-based access record for Admins and Employees.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "employee"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Active", "Suspended"]
+        },
+        "canEditTrips": { "type": "boolean" },
+        "canDeleteRecords": { "type": "boolean" },
+        "canManageBilling": { "type": "boolean" },
+        "canImportExcel": { "type": "boolean" },
+        "canExportData": { "type": "boolean" },
+        "canManageMasters": { "type": "boolean" },
+        "addedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "email",
+        "displayName",
+        "role",
+        "status",
+        "canEditTrips",
+        "canDeleteRecords",
+        "canManageBilling",
+        "canImportExcel",
+        "canExportData",
+        "canManageMasters",
+        "addedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable ERP audit trail of user actions.",
+      "type": "object",
+      "properties": {
+        "actorEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "actorRole": {
+          "type": "string",
+          "enum": ["admin", "employee"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["CREATE", "UPDATE", "DELETE", "IMPORT", "EXPORT", "BACKUP", "RESTORE", "BILL"]
+        },
+        "module": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "recordId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "actorEmail",
+        "actorRole",
+        "action",
+        "module",
+        "recordId",
+        "summary",
+        "ownerId",
+        "createdAt"
+      ]
+    },
+    "ImportBatch": {
+      "title": "ImportBatch",
+      "description": "Metadata summary of a confirmed Excel workbook import.",
+      "type": "object",
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "sheetNames": {
+          "type": "array"
+        },
+        "vehiclesCreated": { "type": "number" },
+        "partiesCreated": { "type": "number" },
+        "tripsCreated": { "type": "number" },
+        "sheetRowsSaved": { "type": "number" },
+        "duplicatesSkipped": { "type": "number" },
+        "karjaExcludedCount": { "type": "number" },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "fileName",
+        "sheetNames",
+        "vehiclesCreated",
+        "partiesCreated",
+        "tripsCreated",
+        "sheetRowsSaved",
+        "duplicatesSkipped",
+        "karjaExcludedCount",
+        "ownerId",
+        "createdAt"
+      ]
+    },
+    "ImportedSheetRow": {
+      "title": "ImportedSheetRow",
+      "description": "Preserved original row from an imported Excel worksheet including columns, formulas, dates, amounts, and notes.",
+      "type": "object",
+      "properties": {
+        "batchId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sheetName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "rowIndex": { "type": "number" },
+        "targetModule": {
+          "type": "string",
+          "enum": ["vehicles", "parties", "trips", "ledger-summary"]
+        },
+        "mappedRecordId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "rowSignature": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "originalDate": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "primaryAmount": { "type": "number" },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "columnsOrder": { "type": "array" },
+        "cells": { "type": "array" },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "batchId",
+        "sheetName",
+        "rowIndex",
+        "targetModule",
+        "mappedRecordId",
+        "rowSignature",
+        "originalDate",
+        "primaryAmount",
+        "notes",
+        "columnsOrder",
+        "cells",
+        "ownerId",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/vehicles/{vehicleId}": {
+      "schema": { "$ref": "#/entities/Vehicle" },
+      "description": "Fleet vehicles registered for BAPASITARAM ENTERPRISE."
+    },
+    "/parties/{partyId}": {
+      "schema": { "$ref": "#/entities/Party" },
+      "description": "Client, consignor, and broker party accounts."
+    },
+    "/partyPayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/PartyPayment" },
+      "description": "Party payment receipts, advances, and ledger adjustments."
+    },
+    "/trips/{tripId}": {
+      "schema": { "$ref": "#/entities/Trip" },
+      "description": "Transport trip dispatches and INR financial ledgers."
+    },
+    "/drivers/{driverId}": {
+      "schema": { "$ref": "#/entities/Driver" },
+      "description": "Fleet drivers and salary agreements."
+    },
+    "/driverPayments/{paymentId}": {
+      "schema": { "$ref": "#/entities/DriverPayment" },
+      "description": "Driver salary, advance, allowance, and deduction ledger entries."
+    },
+    "/maintenanceRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/MaintenanceRecord" },
+      "description": "Vehicle maintenance, repairs, and standalone diesel/toll/operational expenses."
+    },
+    "/bills/{billId}": {
+      "schema": { "$ref": "#/entities/Bill" },
+      "description": "Party-wise freight bills generated from trip records."
+    },
+    "/companySettings/{settingId}": {
+      "schema": { "$ref": "#/entities/CompanySettings" },
+      "description": "Company bank details and invoice numbering settings."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized admin accounts managed by the bootstrap admin."
+    },
+    "/erpUsers/{userId}": {
+      "schema": { "$ref": "#/entities/ErpUser" },
+      "description": "Role-based access profiles for Admin and Employee users."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable ERP audit history."
+    },
+    "/importBatches/{batchId}": {
+      "schema": { "$ref": "#/entities/ImportBatch" },
+      "description": "Confirmed Excel import audit batches."
+    },
+    "/importedSheetRows/{rowId}": {
+      "schema": { "$ref": "#/entities/ImportedSheetRow" },
+      "description": "Preserved original Excel rows, formulas, dates, amounts, and notes."
+    }
+  }
+}

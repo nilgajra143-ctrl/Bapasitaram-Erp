@@ -1,0 +1,8 @@
+{
+  "name": "BAPASITARAM ENTERPRISE — Transport ERP",
+  "description": "Transport management ERP for BAPASITARAM ENTERPRISE featuring fleet vehicle management, party directory, trip entry, trip history, and INR financial tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
