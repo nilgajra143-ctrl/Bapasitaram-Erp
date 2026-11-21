@@ -1114,6 +1114,13 @@ export function sanitizeBackupRecordForRestore(
         BLUEPRINT_LIMITS.PARTY_NAME_MAX
       );
       if (companyName.length < 2) return null;
+      const rawLogo = asStr(rawRow.logoDataUrl).trim();
+      const safeLogo =
+        rawLogo === '' ||
+        (rawLogo.length <= BLUEPRINT_LIMITS.LOGO_DATA_URL_MAX &&
+          /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(rawLogo))
+          ? rawLogo
+          : '';
       return {
         companyName,
         address: clampStr(asStr(rawRow.address), BLUEPRINT_LIMITS.ADDRESS_MAX),
@@ -1131,6 +1138,9 @@ export function sanitizeBackupRecordForRestore(
         branchName: clampStr(asStr(rawRow.branchName), BLUEPRINT_LIMITS.VENDOR_MAX),
         billPrefix: clampStr(asStr(rawRow.billPrefix, 'BSE-'), 30),
         nextBillSeq: Math.max(1, Math.round(clampNum(asNum(rawRow.nextBillSeq, 1), 1, 1000000))),
+        lrPrefix: clampStr(asStr(rawRow.lrPrefix, 'BSE-LR-'), BLUEPRINT_LIMITS.LR_PREFIX_MAX),
+        nextLrSeq: Math.max(1, Math.round(clampNum(asNum(rawRow.nextLrSeq, 1), 1, 1000000))),
+        logoDataUrl: safeLogo,
         defaultDieselRate: clampNum(
           asNum(rawRow.defaultDieselRate, DEFAULT_DIESEL_RATE),
           0,

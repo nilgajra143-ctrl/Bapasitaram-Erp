@@ -25,10 +25,15 @@ import type {
   Driver,
   DriverPayment,
   ErpUser,
+  ExpiryAlertScope,
+  ExpiryNotificationRecord,
+  ExpiryRecipientRole,
   ImportBatch,
   ImportedSheetRow,
+  LorryReceipt,
   MaintenanceRecord,
   NavSection,
+  NotificationPreference,
   Party,
   PartyPayment,
   Trip,
@@ -40,10 +45,12 @@ import { AdminLogin } from './components/AdminLogin';
 import { LayoutShell } from './components/LayoutShell';
 import { DashboardView } from './components/DashboardView';
 import { VehiclesView } from './components/VehiclesView';
+import { ExpiryNotificationsView } from './components/ExpiryNotificationsView';
 import { PartiesView } from './components/PartiesView';
 import { DriversView } from './components/DriversView';
 import { ExpensesView } from './components/ExpensesView';
 import { BillingView } from './components/BillingView';
+import { LorryReceiptsView } from './components/LorryReceiptsView';
 import { ReportsView } from './components/ReportsView';
 import { SecurityBackupView } from './components/SecurityBackupView';
 import { TripEntryView } from './components/TripEntryView';
@@ -75,8 +82,13 @@ function ErpAppContent() {
   const [driverPayments, setDriverPayments] = useState<DriverPayment[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
+  const [lorryReceipts, setLorryReceipts] = useState<LorryReceipt[]>([]);
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [erpUsers, setErpUsers] = useState<ErpUser[]>([]);
+  const [notificationPreferences, setNotificationPreferences] = useState<
+    NotificationPreference[]
+  >([]);
+  const [expiryNotifications, setExpiryNotifications] = useState<ExpiryNotificationRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [importBatches, setImportBatches] = useState<ImportBatch[]>([]);
   const [importedSheetRows, setImportedSheetRows] = useState<ImportedSheetRow[]>([]);
@@ -124,8 +136,11 @@ function ErpAppContent() {
       setDriverPayments([]);
       setMaintenanceRecords([]);
       setBills([]);
+      setLorryReceipts([]);
       setCompanySettings(null);
       setErpUsers([]);
+      setNotificationPreferences([]);
+      setExpiryNotifications([]);
       setAuditLogs([]);
       setImportBatches([]);
       setImportedSheetRows([]);
@@ -143,8 +158,11 @@ function ErpAppContent() {
       driverPayments: false,
       maintenanceRecords: false,
       bills: false,
+      lorryReceipts: false,
       companySettings: false,
       erpUsers: false,
+      notificationPreferences: false,
+      expiryNotifications: false,
       auditLogs: false,
       batches: false,
       rows: false,
@@ -288,6 +306,24 @@ function ErpAppContent() {
       (err) => handleFirestoreError(err, OperationType.LIST, 'bills')
     );
 
+    const unsubLorryReceipts = onSnapshot(
+      scopedQuery('lorryReceipts'),
+      (snap) => {
+        setLorryReceipts(
+          snap.docs
+            .map((d) => ({ id: d.id, ...(d.data() as Omit<LorryReceipt, 'id'>) }))
+            .sort((a, b) => {
+              const dateCmp = b.lrDate.localeCompare(a.lrDate);
+              if (dateCmp !== 0) return dateCmp;
+              return getMillis(b.createdAt) - getMillis(a.createdAt);
+            })
+        );
+        readyFlags.lorryReceipts = true;
+        checkReady();
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'lorryReceipts')
+    );
+
     const unsubSettings = onSnapshot(
       scopedQuery('companySettings'),
       (snap) => {
@@ -314,6 +350,90 @@ function ErpAppContent() {
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'erpUsers')
     );
+
+    const unsubNotificationPrefs = onSnapshot(
+      scopedQuery('notificationPreferences'),
+      (snap) => {
+        setNotificationPreferences(
+          snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<NotificationPreference, 'id'>),
+          }))
+        );
+        readyFlags.notificationPreferences = true;
+        checkReady();
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'notificationPreferences')
+    );
+
+    let unsubExpiryNotifications = () => {};
+    if (isSuperAdmin) {
+      unsubExpiryNotifications = onSnapshot(
+        query(collection(db, 'expiryNotifications')),
+        (snap) => {
+          setExpiryNotifications(
+            snap.docs
+              .map((d) => ({ id: d.id, ...(d.data() as Omit<ExpiryNotificationRecord, 'id'>) }))
+              .sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt))
+          );
+          readyFlags.expiryNotifications = true;
+          checkReady();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'expiryNotifications')
+      );
+    } else {
+      let ownRows: ExpiryNotificationRecord[] = [];
+      let emailRows: ExpiryNotificationRecord[] = [];
+      let ownReady = false;
+      let emailReady = false;
+
+      const syncMerged = () => {
+        const merged = new Map<string, ExpiryNotificationRecord>();
+        ownRows.forEach((r) => merged.set(r.id, r));
+        emailRows.forEach((r) => merged.set(r.id, r));
+        setExpiryNotifications(
+          Array.from(merged.values()).sort((a, b) => getMillis(b.createdAt) - getMillis(a.createdAt))
+        );
+        if (ownReady && emailReady) {
+          readyFlags.expiryNotifications = true;
+          checkReady();
+        }
+      };
+
+      const unsubOwnNotifs = onSnapshot(
+        query(collection(db, 'expiryNotifications'), where('ownerId', '==', user.uid)),
+        (snap) => {
+          ownRows = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<ExpiryNotificationRecord, 'id'>),
+          }));
+          ownReady = true;
+          syncMerged();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'expiryNotifications')
+      );
+
+      const unsubRecipientNotifs = onSnapshot(
+        query(
+          collection(db, 'expiryNotifications'),
+          where('recipientEmail', '==', user.email || '')
+        ),
+        (snap) => {
+          emailRows = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<ExpiryNotificationRecord, 'id'>),
+          }));
+          emailReady = true;
+          syncMerged();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'expiryNotifications')
+      );
+
+      unsubExpiryNotifications = () => {
+        unsubOwnNotifs();
+        unsubRecipientNotifs();
+      };
+    }
 
     const unsubAuditLogs = onSnapshot(
       scopedQuery('auditLogs'),
@@ -366,8 +486,11 @@ function ErpAppContent() {
       unsubDriverPayments();
       unsubMaintenance();
       unsubBills();
+      unsubLorryReceipts();
       unsubSettings();
       unsubErpUsers();
+      unsubNotificationPrefs();
+      unsubExpiryNotifications();
       unsubAuditLogs();
       unsubBatches();
       unsubRows();
@@ -378,6 +501,10 @@ function ErpAppContent() {
     if (isSuperAdmin) {
       return {
         role: 'admin',
+        recipientRole: 'admin',
+        expiryAlertScope: 'all',
+        assignedVehicleIds: [],
+        assignedDriverId: '',
         isAdmin: true,
         isSuspended: false,
         canEditTrips: true,
@@ -393,8 +520,22 @@ function ErpAppContent() {
     const matched = erpUsers.find((u) => u.email.toLowerCase() === emailLower);
     if (matched) {
       const isUserAdmin = matched.role === 'admin';
+      const recipientRole: ExpiryRecipientRole = isUserAdmin
+        ? 'admin'
+        : matched.recipientRole || 'office_staff';
+      const expiryAlertScope: ExpiryAlertScope = isUserAdmin
+        ? 'all'
+        : recipientRole === 'driver'
+        ? 'assigned'
+        : matched.expiryAlertScope || 'assigned';
       return {
         role: matched.role,
+        recipientRole,
+        expiryAlertScope,
+        assignedVehicleIds: Array.isArray(matched.assignedVehicleIds)
+          ? matched.assignedVehicleIds
+          : [],
+        assignedDriverId: matched.assignedDriverId || '',
         isAdmin: isUserAdmin,
         isSuspended: matched.status === 'Suspended',
         canEditTrips: isUserAdmin || matched.canEditTrips,
@@ -406,9 +547,13 @@ function ErpAppContent() {
       };
     }
 
-    // Uninvited verified users receive read-only/restricted permissions until explicitly authorized by Admin
+    // Uninvited verified users receive read-only/restricted permissions and zero expiry alerts until authorized by Admin
     return {
       role: 'employee',
+      recipientRole: 'office_staff',
+      expiryAlertScope: 'none',
+      assignedVehicleIds: [],
+      assignedDriverId: '',
       isAdmin: false,
       isSuspended: false,
       canEditTrips: false,
@@ -507,6 +652,9 @@ function ErpAppContent() {
     >
       {activeSection === 'dashboard' && (
         <DashboardView
+          userId={user.uid}
+          userEmail={user.email || ''}
+          userDisplayName={user.displayName || ''}
           permissions={userPermissions}
           vehicles={vehicles}
           parties={parties}
@@ -515,6 +663,10 @@ function ErpAppContent() {
           driverPayments={driverPayments}
           maintenanceRecords={maintenanceRecords}
           bills={bills}
+          erpUsers={erpUsers}
+          notificationPreferences={notificationPreferences}
+          expiryNotifications={expiryNotifications}
+          companySettings={companySettings}
           loading={dataLoading}
           onNavigate={handleNavigate}
           onOpenNewTrip={handleOpenNewTrip}
@@ -531,6 +683,25 @@ function ErpAppContent() {
           maintenanceRecords={maintenanceRecords}
           driverPayments={driverPayments}
           loading={dataLoading}
+        />
+      )}
+
+      {activeSection === 'expiry-alerts' && (
+        <ExpiryNotificationsView
+          userId={user.uid}
+          userEmail={user.email || ''}
+          userDisplayName={user.displayName || ''}
+          actorRole={userPermissions.role}
+          isSuperAdmin={isSuperAdmin}
+          permissions={userPermissions}
+          vehicles={vehicles}
+          drivers={drivers}
+          erpUsers={erpUsers}
+          notificationPreferences={notificationPreferences}
+          expiryNotifications={expiryNotifications}
+          companySettings={companySettings}
+          loading={dataLoading}
+          onNavigate={handleNavigate}
         />
       )}
 
@@ -572,6 +743,21 @@ function ErpAppContent() {
           trips={trips}
           maintenanceRecords={maintenanceRecords}
           driverPayments={driverPayments}
+          loading={dataLoading}
+        />
+      )}
+
+      {activeSection === 'lorry-receipts' && (
+        <LorryReceiptsView
+          userId={user.uid}
+          actorRole={userPermissions.role}
+          permissions={userPermissions}
+          lorryReceipts={lorryReceipts}
+          vehicles={vehicles}
+          parties={parties}
+          trips={trips}
+          drivers={drivers}
+          companySettings={companySettings}
           loading={dataLoading}
         />
       )}

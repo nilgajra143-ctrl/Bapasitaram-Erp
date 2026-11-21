@@ -35,6 +35,8 @@ import {
   type ErpUser,
   type ErpUserRole,
   type ErpUserStatus,
+  type ExpiryAlertScope,
+  type ExpiryRecipientRole,
   type ImportedSheetRow,
   type MaintenanceRecord,
   type Party,
@@ -118,7 +120,10 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
   // RBAC User creation
   const [newEmail, setNewEmail] = useState('');
   const [newName, setNewName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [newRole, setNewRole] = useState<ErpUserRole>('employee');
+  const [newRecipientRole, setNewRecipientRole] = useState<ExpiryRecipientRole>('office_staff');
+  const [newExpiryScope, setNewExpiryScope] = useState<ExpiryAlertScope>('assigned');
   const [newPerms, setNewPerms] = useState({
     canEditTrips: true,
     canDeleteRecords: false,
@@ -283,12 +288,26 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
     }
 
     const docId = generateSafeDocId('usr');
+    const cleanPhone = clampStr(newPhone, BLUEPRINT_LIMITS.PHONE_MAX);
+    const effectiveRecipientRole: ExpiryRecipientRole =
+      newRole === 'admin' ? 'admin' : newRecipientRole;
+    const effectiveScope: ExpiryAlertScope =
+      newRole === 'admin'
+        ? 'all'
+        : effectiveRecipientRole === 'driver'
+        ? 'assigned'
+        : newExpiryScope;
     setSavingUser(true);
     try {
       await setDoc(doc(collection(db, 'erpUsers'), docId), {
         email,
         displayName,
         role: newRole,
+        recipientRole: effectiveRecipientRole,
+        phone: cleanPhone,
+        expiryAlertScope: effectiveScope,
+        assignedVehicleIds: [],
+        assignedDriverId: '',
         status: 'Active' as ErpUserStatus,
         canEditTrips: newRole === 'admin' ? true : newPerms.canEditTrips,
         canDeleteRecords: newRole === 'admin' ? true : newPerms.canDeleteRecords,
@@ -306,10 +325,13 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
         action: 'CREATE',
         module: 'Security & RBAC',
         recordId: docId,
-        summary: `Added ${newRole} user ${email}`,
+        summary: `Added ${newRole} (${effectiveRecipientRole}) user ${email}`,
       });
       setNewEmail('');
       setNewName('');
+      setNewPhone('');
+      setNewRecipientRole('office_staff');
+      setNewExpiryScope('assigned');
     } catch (error) {
       setUserError(extractReadableFirestoreError(error, 'Create ERP User'));
     } finally {
@@ -921,27 +943,80 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
                 </div>
 
                 {newRole === 'employee' && (
-                  <div className="flex flex-wrap gap-4 text-xs text-slate-700 pt-1">
-                    {(
-                      [
-                        ['canEditTrips', 'Edit Trips'],
-                        ['canManageBilling', 'Manage Billing'],
-                        ['canExportData', 'Export Data'],
-                        ['canManageMasters', 'Manage Vehicles/Parties/Drivers'],
-                        ['canImportExcel', 'Import Excel'],
-                        ['canDeleteRecords', 'Delete Records'],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <label key={key} className="inline-flex items-center gap-2 cursor-pointer">
+                  <div className="space-y-3 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                          Expiry Alert Role
+                        </label>
+                        <select
+                          value={newRecipientRole}
+                          onChange={(e) =>
+                            setNewRecipientRole(e.target.value as ExpiryRecipientRole)
+                          }
+                          className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+                        >
+                          <option value="office_staff">Office Staff</option>
+                          <option value="driver">Driver (Assigned Vehicle Only)</option>
+                        </select>
+                      </div>
+                      {newRecipientRole === 'office_staff' && (
+                        <div>
+                          <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                            Vehicle Expiry Alert Scope
+                          </label>
+                          <select
+                            value={newExpiryScope}
+                            onChange={(e) =>
+                              setNewExpiryScope(e.target.value as ExpiryAlertScope)
+                            }
+                            className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+                          >
+                            <option value="assigned">Assigned Vehicles Only</option>
+                            <option value="all">All Fleet Vehicles</option>
+                            <option value="none">No Expiry Alerts</option>
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                          Real Mobile Number (Optional)
+                        </label>
                         <input
-                          type="checkbox"
-                          checked={newPerms[key]}
-                          onChange={(e) => setNewPerms({ ...newPerms, [key]: e.target.checked })}
-                          className="w-4 h-4 accent-slate-900"
+                          type="tel"
+                          value={newPhone}
+                          onChange={(e) => setNewPhone(e.target.value)}
+                          placeholder="+91..."
+                          maxLength={BLUEPRINT_LIMITS.PHONE_MAX}
+                          className="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-lg"
                         />
-                        <span>{label}</span>
-                      </label>
-                    ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-4 text-xs text-slate-700">
+                      {(
+                        [
+                          ['canEditTrips', 'Edit Trips'],
+                          ['canManageBilling', 'Manage Billing'],
+                          ['canExportData', 'Export Data'],
+                          ['canManageMasters', 'Manage Vehicles/Parties/Drivers'],
+                          ['canImportExcel', 'Import Excel'],
+                          ['canDeleteRecords', 'Delete Records'],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <label key={key} className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={newPerms[key]}
+                            onChange={(e) => setNewPerms({ ...newPerms, [key]: e.target.checked })}
+                            className="w-4 h-4 accent-slate-900"
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Assign specific vehicles or link a Driver profile in <span className="font-semibold text-slate-700">Expiry Alerts → Recipient Access Control</span> after creating the user.
+                    </p>
                   </div>
                 )}
 
@@ -982,6 +1057,18 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
                             </td>
                             <td className="py-3 px-4">
                               <div className="uppercase font-semibold text-slate-800">{u.role}</div>
+                              <div className="text-[11px] text-slate-500">
+                                Expiry:{' '}
+                                {u.role === 'admin'
+                                  ? 'Admin (All Fleet)'
+                                  : u.recipientRole === 'driver'
+                                  ? 'Driver (Assigned)'
+                                  : `Staff (${u.expiryAlertScope || 'assigned'}${
+                                      (u.expiryAlertScope || 'assigned') === 'assigned'
+                                        ? ` · ${(u.assignedVehicleIds || []).length}V`
+                                        : ''
+                                    })`}
+                              </div>
                               <button
                                 type="button"
                                 onClick={() => handleToggleUserStatus(u)}

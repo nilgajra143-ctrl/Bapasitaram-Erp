@@ -19,6 +19,8 @@ import {
   ClipboardCheck,
   MapPin,
   Sparkles,
+  FileCheck2,
+  BellRing,
 } from 'lucide-react';
 import type { NavSection, UserPermissions } from '../types/erp';
 
@@ -57,6 +59,7 @@ const NAV_GROUPS: NavGroup[] = [
         visible: (p) => p.canEditTrips,
       },
       { id: 'trip-history', label: 'Trip History', icon: ClipboardList },
+      { id: 'lorry-receipts', label: 'Lorry Receipt (LR)', icon: FileCheck2 },
       {
         id: 'billing',
         label: 'Billing & Invoices',
@@ -69,6 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: 'Fleet & Masters',
     items: [
       { id: 'vehicles', label: 'Vehicles', icon: Truck },
+      { id: 'expiry-alerts', label: 'Expiry Alerts', icon: BellRing },
       { id: 'parties', label: 'Parties', icon: Users },
       { id: 'drivers', label: 'Drivers', icon: UserCheck },
       { id: 'expenses', label: 'Expenses & Maint.', icon: Wrench },
@@ -100,7 +104,9 @@ const SECTION_TITLES: Record<NavSection, string> = {
   dashboard: 'Company Dashboard',
   'trip-entry': 'Trip Entry Form',
   'trip-history': 'Trip History',
+  'lorry-receipts': 'Lorry Receipt (LR)',
   vehicles: 'Vehicle Management',
+  'expiry-alerts': 'Vehicle Document Expiry Alerts',
   parties: 'Party Management',
   drivers: 'Driver Management',
   expenses: 'Expense & Maintenance Management',

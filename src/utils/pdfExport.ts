@@ -50,7 +50,7 @@ export async function renderElementToA4Pdf(
   sandbox.style.backgroundColor = '#ffffff';
   sandbox.style.color = '#0f172a';
   sandbox.style.fontFamily =
-    '"Plus Jakarta Sans", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif';
+    '"Plus Jakarta Sans", "Noto Sans Gujarati", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif';
   sandbox.style.zIndex = '-1';
   sandbox.style.padding = '24px';
   sandbox.style.boxSizing = 'border-box';

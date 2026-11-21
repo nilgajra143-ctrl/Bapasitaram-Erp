@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { collection, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Truck,
   Users,
@@ -9,21 +10,45 @@ import {
   PlusCircle,
   CheckCircle2,
   CalendarRange,
+  BellRing,
+  MessageCircle,
 } from 'lucide-react';
-import type {
-  Bill,
-  Driver,
-  DriverPayment,
-  MaintenanceRecord,
-  NavSection,
-  Party,
-  Trip,
-  UserPermissions,
-  Vehicle,
+import { db } from '../firebase';
+import {
+  BLUEPRINT_LIMITS,
+  type Bill,
+  type CompanySettings,
+  type Driver,
+  type DriverPayment,
+  type ErpUser,
+  type ExpiryNotificationRecord,
+  type MaintenanceRecord,
+  type NavSection,
+  type NotificationPreference,
+  type Party,
+  type Trip,
+  type UserPermissions,
+  type Vehicle,
 } from '../types/erp';
-import { formatDateIN, formatINR, getDaysUntilExpiry } from '../utils/formatters';
+import { clampStr, formatDateIN, formatINR, generateSafeDocId } from '../utils/formatters';
+import {
+  buildExpiryDedupKey,
+  buildExpiryWhatsAppMessage,
+  buildVehicleDocumentExpiryAlerts,
+  filterNotificationHistoryForUser,
+  formatRecipientRoleLabel,
+  hasDuplicateExpiryNotification,
+  hasValidRecipientPhone,
+  resolveAuthorizedVehiclesForUser,
+  type AuthorizedExpiryRecipient,
+  type VehicleDocumentExpiryAlert,
+} from '../utils/expiryNotifications';
+import { WhatsAppShareModal } from './WhatsAppShareModal';
 
 interface DashboardViewProps {
+  userId: string;
+  userEmail: string;
+  userDisplayName: string;
   permissions: UserPermissions;
   vehicles: Vehicle[];
   parties: Party[];
@@ -32,12 +57,19 @@ interface DashboardViewProps {
   driverPayments: DriverPayment[];
   maintenanceRecords: MaintenanceRecord[];
   bills: Bill[];
+  erpUsers: ErpUser[];
+  notificationPreferences: NotificationPreference[];
+  expiryNotifications: ExpiryNotificationRecord[];
+  companySettings: CompanySettings | null;
   loading: boolean;
   onNavigate: (section: NavSection) => void;
   onOpenNewTrip: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
+  userId,
+  userEmail,
+  userDisplayName,
   permissions,
   vehicles,
   parties,
@@ -46,11 +78,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   driverPayments,
   maintenanceRecords,
   bills,
+  erpUsers,
+  notificationPreferences,
+  expiryNotifications,
+  companySettings,
   loading,
   onNavigate,
   onOpenNewTrip,
 }) => {
   const [periodMode, setPeriodMode] = useState<'monthly' | 'yearly'>('monthly');
+  const [whatsappShareTarget, setWhatsappShareTarget] = useState<{
+    alert: VehicleDocumentExpiryAlert;
+    recipient: AuthorizedExpiryRecipient;
+    message: string;
+  } | null>(null);
+  const loggedDedupKeysRef = useRef<Set<string>>(new Set());
 
   const metrics = useMemo(() => {
     const activeTripsList = trips.filter((t) => t.tripStatus !== 'Cancelled');
@@ -211,56 +253,165 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .slice(0, 6);
   }, [trips, maintenanceRecords, periodMode]);
 
-  // Important Alerts: Vehicle 5 docs + Driver License expiries
-  const complianceAlerts = useMemo(() => {
-    const alerts: {
-      id: string;
-      subject: string;
-      docType: string;
-      expiryDate: string;
-      daysLeft: number;
-      section: NavSection;
-    }[] = [];
+  // Strictly recipient-scoped Vehicle Document Expiry Alerts (5 days before, expiry day, overdue until renewal)
+  const authorizedVehicles = useMemo(
+    () => resolveAuthorizedVehiclesForUser({ vehicles, drivers, permissions }),
+    [vehicles, drivers, permissions]
+  );
 
-    vehicles.forEach((v) => {
-      const checks = [
-        { label: 'Fitness', date: v.fitnessExpiry },
-        { label: 'Insurance', date: v.insuranceExpiry },
-        { label: 'PUC', date: v.pucExpiry || '' },
-        { label: 'Road Tax', date: v.taxExpiry || '' },
-        { label: 'Permit', date: v.permitExpiry },
-      ];
-      checks.forEach((c) => {
-        const days = getDaysUntilExpiry(c.date);
-        if (days !== null && days <= 30) {
-          alerts.push({
-            id: `veh-${v.id}-${c.label}`,
-            subject: v.registrationNumber,
-            docType: c.label,
-            expiryDate: c.date,
-            daysLeft: days,
-            section: 'vehicles',
-          });
-        }
+  const vehicleExpiryAlerts = useMemo(
+    () =>
+      buildVehicleDocumentExpiryAlerts({
+        vehicles,
+        drivers,
+        erpUsers,
+        preferences: notificationPreferences,
+        permissions,
+        activeUserEmail: userEmail,
+        activeUserId: userId,
+        activeUserName: userDisplayName || (permissions.isAdmin ? 'Administrator' : 'ERP User'),
+        adminUser: permissions.isAdmin
+          ? {
+              userId,
+              email: userEmail,
+              displayName: userDisplayName || 'Administrator',
+            }
+          : null,
+        companySettings,
+        respectActiveUserPreferences: true,
+      }),
+    [
+      vehicles,
+      drivers,
+      erpUsers,
+      notificationPreferences,
+      permissions,
+      userEmail,
+      userId,
+      userDisplayName,
+      companySettings,
+    ]
+  );
+
+  const pushedRecipientAlerts = useMemo(() => {
+    if (permissions.isAdmin || vehicleExpiryAlerts.length > 0) return [];
+    const authorizedIds = new Set(authorizedVehicles.map((v) => v.id));
+    const scoped = filterNotificationHistoryForUser({
+      history: expiryNotifications,
+      permissions,
+      userId,
+      userEmail,
+      authorizedVehicleIds: authorizedIds,
+    });
+    const emailLower = userEmail.trim().toLowerCase();
+    return scoped
+      .filter(
+        (h) =>
+          h.recipientEmail.trim().toLowerCase() === emailLower &&
+          h.deliveryStatus !== 'Acknowledged'
+      )
+      .slice(0, 6);
+  }, [
+    permissions,
+    vehicleExpiryAlerts.length,
+    authorizedVehicles,
+    expiryNotifications,
+    userId,
+    userEmail,
+  ]);
+
+  // Deduplicated automatic In-App dashboard notification history logging (never duplicates)
+  useEffect(() => {
+    if (loading || !userId || vehicleExpiryAlerts.length === 0) return;
+
+    const activeRecipientRole = permissions.isAdmin ? 'admin' : permissions.recipientRole;
+    const activeRecipientName =
+      userDisplayName || (permissions.isAdmin ? 'Administrator' : 'ERP User');
+    const cleanEmail = userEmail.trim().toLowerCase();
+    const activePref = notificationPreferences.find(
+      (p) =>
+        p.id === userId ||
+        p.userId === userId ||
+        (cleanEmail && p.email.trim().toLowerCase() === cleanEmail)
+    );
+    if (activePref && !activePref.inAppEnabled) return;
+
+    const toPersist = vehicleExpiryAlerts.slice(0, 12).filter((alert) => {
+      const dedupKey = buildExpiryDedupKey({
+        vehicleId: alert.vehicleId,
+        documentType: alert.documentType,
+        expiryDate: alert.expiryDate,
+        recipientRole: activeRecipientRole,
+        recipientId: userId,
+        triggerType: alert.triggerType,
+        channel: 'In-App',
+      });
+      if (loggedDedupKeysRef.current.has(dedupKey)) return false;
+      if (hasDuplicateExpiryNotification(expiryNotifications, dedupKey)) {
+        loggedDedupKeysRef.current.add(dedupKey);
+        return false;
+      }
+      return true;
+    });
+
+    if (toPersist.length === 0) return;
+
+    toPersist.forEach((alert) => {
+      const dedupKey = buildExpiryDedupKey({
+        vehicleId: alert.vehicleId,
+        documentType: alert.documentType,
+        expiryDate: alert.expiryDate,
+        recipientRole: activeRecipientRole,
+        recipientId: userId,
+        triggerType: alert.triggerType,
+        channel: 'In-App',
+      });
+      loggedDedupKeysRef.current.add(dedupKey);
+      const docId = generateSafeDocId('ntf');
+      void setDoc(doc(collection(db, 'expiryNotifications'), docId), {
+        dedupKey,
+        vehicleId: alert.vehicleId,
+        vehicleNumber: clampStr(alert.vehicleNumber, BLUEPRINT_LIMITS.VEHICLE_REG_MAX),
+        documentType: alert.documentType,
+        expiryDate: clampStr(alert.expiryDate, BLUEPRINT_LIMITS.DATE_MAX),
+        triggerType: alert.triggerType,
+        recipientRole: activeRecipientRole,
+        recipientId: clampStr(userId, 128),
+        recipientName: clampStr(activeRecipientName, 120),
+        recipientEmail: clampStr(cleanEmail, BLUEPRINT_LIMITS.EMAIL_MAX),
+        recipientPhone: clampStr(activePref?.phone || '', BLUEPRINT_LIMITS.PHONE_MAX),
+        channel: 'In-App',
+        deliveryStatus: 'Displayed',
+        statusNote: clampStr(`Displayed in ERP dashboard (${alert.triggerLabel})`, 300),
+        ownerId: userId,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        // Non-blocking audit log; remove from session cache so next reload can retry if transient
+        loggedDedupKeysRef.current.delete(dedupKey);
       });
     });
+  }, [
+    loading,
+    userId,
+    userEmail,
+    userDisplayName,
+    permissions.isAdmin,
+    permissions.recipientRole,
+    vehicleExpiryAlerts,
+    notificationPreferences,
+    expiryNotifications,
+  ]);
 
-    drivers.forEach((d) => {
-      const days = getDaysUntilExpiry(d.licenseExpiry);
-      if (days !== null && days <= 30) {
-        alerts.push({
-          id: `drv-${d.id}-dl`,
-          subject: d.driverName,
-          docType: 'Driving License',
-          expiryDate: d.licenseExpiry,
-          daysLeft: days,
-          section: 'drivers',
-        });
-      }
-    });
-
-    return alerts.sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 7);
-  }, [vehicles, drivers]);
+  const expiryScopeSummary = permissions.isAdmin
+    ? 'Admin · All Fleet Vehicles'
+    : permissions.recipientRole === 'driver'
+    ? 'Driver · Assigned Vehicle Only'
+    : permissions.expiryAlertScope === 'all'
+    ? 'Office Staff · All Authorized Vehicles'
+    : permissions.expiryAlertScope === 'none'
+    ? 'Office Staff · Restricted'
+    : `Office Staff · ${permissions.assignedVehicleIds.length} Assigned`;
 
   // Recent Transactions across Trips, Bills, Driver Payments, Maintenance
   const recentTransactions = useMemo(() => {
@@ -660,63 +811,183 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </section>
 
-        {/* Important Alerts */}
+        {/* Vehicle Document Expiry Alerts (Role-Scoped: 5d / Today / Overdue) */}
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-slate-900">Important Expiry Alerts</h3>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <BellRing className="w-4 h-4 text-slate-700 shrink-0" />
+                <h3 className="text-sm font-semibold text-slate-900 truncate">
+                  Vehicle Document Expiry Alerts
+                </h3>
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">{expiryScopeSummary}</div>
+            </div>
             <button
               type="button"
-              onClick={() => onNavigate('vehicles')}
-              className="text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+              onClick={() => onNavigate('expiry-alerts')}
+              className="text-xs font-medium text-slate-700 hover:text-slate-900 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              Fleet →
+              Alerts &amp; Prefs →
             </button>
           </div>
           <div className="p-5">
-            {vehicles.length === 0 && drivers.length === 0 ? (
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Register vehicles and drivers with document expiry dates (Fitness, Insurance, PUC, Tax, Permit, Driving License) to monitor renewals here.
-              </p>
-            ) : complianceAlerts.length === 0 ? (
+            {vehicleExpiryAlerts.length === 0 && pushedRecipientAlerts.length === 0 ? (
               <div className="flex items-start gap-2.5 text-xs text-emerald-700">
                 <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>All recorded vehicle &amp; driver compliance documents are valid beyond 30 days.</span>
+                <span>
+                  {permissions.expiryAlertScope === 'none' && !permissions.isAdmin
+                    ? 'No vehicle expiry alerts are assigned to your account.'
+                    : 'No overdue, same-day, or 5-day vehicle document expiries for your authorized vehicles.'}
+                </span>
               </div>
+            ) : vehicleExpiryAlerts.length > 0 ? (
+              <ul className="divide-y divide-slate-100">
+                {vehicleExpiryAlerts.slice(0, 7).map((alert) => {
+                  const primaryWhatsAppRecipient =
+                    alert.recipients.find((r) => hasValidRecipientPhone(r.recipientPhone)) ||
+                    alert.recipients[0];
+                  return (
+                    <li
+                      key={alert.id}
+                      className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-2.5"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onNavigate('expiry-alerts')}
+                        className="min-w-0 text-left flex-1 hover:opacity-80 cursor-pointer"
+                      >
+                        <div className="font-mono text-xs font-semibold text-slate-900 truncate">
+                          {alert.vehicleNumber}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {alert.documentType} · {formatDateIN(alert.expiryDate)}
+                        </div>
+                        {permissions.isAdmin && alert.recipients.length > 0 && (
+                          <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                            Recipients:{' '}
+                            {alert.recipients
+                              .map((r) => formatRecipientRoleLabel(r.recipientRole))
+                              .join(', ')}
+                          </div>
+                        )}
+                      </button>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span
+                          className={`inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap ${
+                            alert.triggerType === 'overdue'
+                              ? 'text-red-600'
+                              : alert.triggerType === 'on_expiry'
+                              ? 'text-amber-700'
+                              : 'text-blue-700'
+                          }`}
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          <span>
+                            {alert.triggerType === 'overdue'
+                              ? `Overdue ${Math.abs(alert.daysLeft)}d`
+                              : alert.triggerType === 'on_expiry'
+                              ? 'Today'
+                              : `${alert.daysLeft}d left`}
+                          </span>
+                        </span>
+                        {primaryWhatsAppRecipient &&
+                          hasValidRecipientPhone(primaryWhatsAppRecipient.recipientPhone) && (
+                            <button
+                              type="button"
+                              title={`Share WhatsApp reminder to ${primaryWhatsAppRecipient.recipientName}`}
+                              aria-label={`Share WhatsApp reminder for ${alert.vehicleNumber} ${alert.documentType}`}
+                              onClick={() =>
+                                setWhatsappShareTarget({
+                                  alert,
+                                  recipient: primaryWhatsAppRecipient,
+                                  message: buildExpiryWhatsAppMessage({
+                                    alert,
+                                    recipient: primaryWhatsAppRecipient,
+                                    companyName:
+                                      companySettings?.companyName || 'BAPASITARAM ENTERPRISE',
+                                  }),
+                                })
+                              }
+                              className="p-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-md cursor-pointer"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {complianceAlerts.map((alert) => (
+                {pushedRecipientAlerts.map((rec) => (
                   <li
-                    key={alert.id}
-                    onClick={() => onNavigate(alert.section)}
-                    className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3 cursor-pointer hover:bg-slate-50 rounded"
+                    key={rec.id}
+                    onClick={() => onNavigate('expiry-alerts')}
+                    className="py-2.5 first:pt-0 last:pb-0 flex items-start justify-between gap-2.5 cursor-pointer hover:bg-slate-50 rounded"
                   >
                     <div className="min-w-0">
                       <div className="font-mono text-xs font-semibold text-slate-900 truncate">
-                        {alert.subject}
+                        {rec.vehicleNumber}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {alert.docType} · {formatDateIN(alert.expiryDate)}
+                        {rec.documentType} · {formatDateIN(rec.expiryDate)}
                       </div>
                     </div>
-                    <div
-                      className={`inline-flex items-center gap-1 text-xs font-medium whitespace-nowrap shrink-0 ${
-                        alert.daysLeft < 0 ? 'text-red-600' : 'text-amber-700'
+                    <span
+                      className={`text-[11px] font-semibold whitespace-nowrap shrink-0 ${
+                        rec.triggerType === 'overdue'
+                          ? 'text-red-600'
+                          : rec.triggerType === 'on_expiry'
+                          ? 'text-amber-700'
+                          : 'text-blue-700'
                       }`}
                     >
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      <span>
-                        {alert.daysLeft < 0
-                          ? `Expired ${Math.abs(alert.daysLeft)}d`
-                          : `${alert.daysLeft}d left`}
-                      </span>
-                    </div>
+                      {rec.triggerType === 'overdue'
+                        ? 'Overdue'
+                        : rec.triggerType === 'on_expiry'
+                        ? 'Today'
+                        : '5-Day Notice'}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
+
+            {vehicleExpiryAlerts.length > 7 && (
+              <button
+                type="button"
+                onClick={() => onNavigate('expiry-alerts')}
+                className="mt-3 w-full py-1.5 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg cursor-pointer"
+              >
+                View all {vehicleExpiryAlerts.length} vehicle expiry alerts →
+              </button>
+            )}
           </div>
         </section>
       </div>
+
+      <WhatsAppShareModal
+        open={Boolean(whatsappShareTarget)}
+        onClose={() => setWhatsappShareTarget(null)}
+        title={
+          whatsappShareTarget
+            ? `Vehicle Expiry Reminder — ${whatsappShareTarget.alert.vehicleNumber} (${whatsappShareTarget.alert.documentType})`
+            : 'Vehicle Expiry Reminder'
+        }
+        subtitle="Review recipient mobile number and prepared document expiry reminder — press Send manually in WhatsApp."
+        partyName={
+          whatsappShareTarget
+            ? `${whatsappShareTarget.recipient.recipientName} (${formatRecipientRoleLabel(
+                whatsappShareTarget.recipient.recipientRole
+              )})`
+            : ''
+        }
+        partyPhone={whatsappShareTarget?.recipient.recipientPhone || ''}
+        initialMessage={whatsappShareTarget?.message || ''}
+      />
     </div>
   );
 };

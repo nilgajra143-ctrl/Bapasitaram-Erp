@@ -42,6 +42,107 @@ async function startServer() {
     }
   });
 
+  app.get('/api/notifications/channel-status', requireAuth, (_req: AuthRequest, res) => {
+    const emailWebhookUrl = (process.env.NOTIFICATION_EMAIL_WEBHOOK_URL || '').trim();
+    const whatsappWebhookUrl = (process.env.NOTIFICATION_WHATSAPP_WEBHOOK_URL || '').trim();
+    res.json({
+      emailApiConfigured: Boolean(emailWebhookUrl && /^https:\/\//i.test(emailWebhookUrl)),
+      whatsappApiConfigured: Boolean(whatsappWebhookUrl && /^https:\/\//i.test(whatsappWebhookUrl)),
+    });
+  });
+
+  app.post('/api/notifications/send', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        channel?: string;
+        recipientAddress?: string;
+        recipientName?: string;
+        subject?: string;
+        message?: string;
+      };
+      const channel = typeof body.channel === 'string' ? body.channel : '';
+      const recipientAddress =
+        typeof body.recipientAddress === 'string' ? body.recipientAddress.trim().slice(0, 120) : '';
+      const recipientName =
+        typeof body.recipientName === 'string' ? body.recipientName.trim().slice(0, 120) : '';
+      const subject =
+        typeof body.subject === 'string' ? body.subject.trim().slice(0, 200) : '';
+      const message =
+        typeof body.message === 'string' ? body.message.trim().slice(0, 2000) : '';
+
+      if (!recipientAddress || !message) {
+        res.status(400).json({ error: 'Recipient contact and message are required.' });
+        return;
+      }
+
+      if (channel === 'Email') {
+        const webhookUrl = (process.env.NOTIFICATION_EMAIL_WEBHOOK_URL || '').trim();
+        const webhookToken = (process.env.NOTIFICATION_EMAIL_WEBHOOK_TOKEN || '').trim();
+        if (!webhookUrl || !/^https:\/\//i.test(webhookUrl)) {
+          res.status(501).json({
+            configured: false,
+            fallback: 'manual',
+            error: 'Automatic Email API is not configured. Use manual email handoff instead.',
+          });
+          return;
+        }
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (webhookToken) headers.Authorization = `Bearer ${webhookToken}`;
+        const upstream = await fetch(webhookUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            to: recipientAddress,
+            recipientName,
+            subject: subject || 'Vehicle Document Expiry Reminder — BAPASITARAM ENTERPRISE',
+            text: message,
+          }),
+        });
+        if (!upstream.ok) {
+          res.status(502).json({ error: `Email delivery gateway returned HTTP ${upstream.status}.` });
+          return;
+        }
+        res.json({ sent: true, channel: 'Email' });
+        return;
+      }
+
+      if (channel === 'WhatsApp (API)') {
+        const webhookUrl = (process.env.NOTIFICATION_WHATSAPP_WEBHOOK_URL || '').trim();
+        const webhookToken = (process.env.NOTIFICATION_WHATSAPP_WEBHOOK_TOKEN || '').trim();
+        if (!webhookUrl || !/^https:\/\//i.test(webhookUrl)) {
+          res.status(501).json({
+            configured: false,
+            fallback: 'manual',
+            error: 'Automatic WhatsApp API is not configured. Use manual WhatsApp sharing instead.',
+          });
+          return;
+        }
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (webhookToken) headers.Authorization = `Bearer ${webhookToken}`;
+        const upstream = await fetch(webhookUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            to: recipientAddress,
+            recipientName,
+            text: message,
+          }),
+        });
+        if (!upstream.ok) {
+          res.status(502).json({ error: `WhatsApp API gateway returned HTTP ${upstream.status}.` });
+          return;
+        }
+        res.json({ sent: true, channel: 'WhatsApp (API)' });
+        return;
+      }
+
+      res.status(400).json({ error: 'Unsupported notification channel.' });
+    } catch (error) {
+      console.error('Notification dispatch error:', error);
+      res.status(500).json({ error: 'Unable to dispatch notification right now.' });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

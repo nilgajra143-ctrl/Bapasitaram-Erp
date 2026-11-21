@@ -4,7 +4,9 @@ export type NavSection =
   | 'dashboard'
   | 'trip-entry'
   | 'trip-history'
+  | 'lorry-receipts'
   | 'vehicles'
+  | 'expiry-alerts'
   | 'parties'
   | 'drivers'
   | 'expenses'
@@ -102,6 +104,46 @@ export type BillStatus = (typeof BILL_STATUSES)[number];
 export const ERP_USER_ROLES = ['admin', 'employee'] as const;
 export type ErpUserRole = (typeof ERP_USER_ROLES)[number];
 
+export const EXPIRY_RECIPIENT_ROLES = ['admin', 'office_staff', 'driver'] as const;
+export type ExpiryRecipientRole = (typeof EXPIRY_RECIPIENT_ROLES)[number];
+
+export const EXPIRY_ALERT_SCOPES = ['assigned', 'all', 'none'] as const;
+export type ExpiryAlertScope = (typeof EXPIRY_ALERT_SCOPES)[number];
+
+export const VEHICLE_DOCUMENT_TYPES = [
+  'Fitness',
+  'Insurance',
+  'PUC',
+  'Road Tax',
+  'Permit',
+] as const;
+export type VehicleDocumentType = (typeof VEHICLE_DOCUMENT_TYPES)[number];
+
+export const EXPIRY_TRIGGER_TYPES = [
+  '5_days_before',
+  'on_expiry',
+  'overdue',
+] as const;
+export type ExpiryTriggerType = (typeof EXPIRY_TRIGGER_TYPES)[number];
+
+export const NOTIFICATION_CHANNELS = [
+  'In-App',
+  'Email',
+  'WhatsApp (Manual)',
+  'WhatsApp (API)',
+] as const;
+export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
+
+export const NOTIFICATION_DELIVERY_STATUSES = [
+  'Displayed',
+  'Prepared (Manual)',
+  'Sent',
+  'Acknowledged',
+  'Failed',
+  'Skipped (No Contact)',
+] as const;
+export type NotificationDeliveryStatus = (typeof NOTIFICATION_DELIVERY_STATUSES)[number];
+
 export const ERP_USER_STATUSES = ['Active', 'Suspended'] as const;
 export type ErpUserStatus = (typeof ERP_USER_STATUSES)[number];
 
@@ -151,6 +193,11 @@ export const BLUEPRINT_LIMITS = {
   BILL_NO_MAX: 50,
   REFERENCE_MAX: 60,
   WORDS_MAX: 250,
+  LR_PREFIX_MAX: 30,
+  GOODS_DESC_MAX: 250,
+  QTY_WEIGHT_MAX: 60,
+  SIGNATURE_MAX: 80,
+  LOGO_DATA_URL_MAX: 150000,
 } as const;
 
 export const DEFAULT_DIESEL_RATE = 98.34;
@@ -339,6 +386,41 @@ export interface Bill {
   updatedAt: Timestamp | null;
 }
 
+export interface LorryReceipt {
+  id: string;
+  lrNumber: string;
+  lrDate: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  tripId: string;
+  tripRefLr: string;
+  consignorPartyId: string;
+  consignorName: string;
+  consignorAddress: string;
+  consignorPhone: string;
+  consigneePartyId: string;
+  consigneeName: string;
+  consigneeAddress: string;
+  consigneePhone: string;
+  origin: string;
+  destination: string;
+  containerNo: string;
+  goodsDescription: string;
+  quantityWeight: string;
+  freightRate: number;
+  totalFreightAmount: number;
+  advanceAmount: number;
+  balanceAmount: number;
+  driverName: string;
+  driverMobile: string;
+  remarks: string;
+  senderSignature: string;
+  receiverSignature: string;
+  ownerId: string;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
+
 export interface CompanySettings {
   id: string;
   companyName: string;
@@ -354,6 +436,9 @@ export interface CompanySettings {
   branchName: string;
   billPrefix: string;
   nextBillSeq: number;
+  lrPrefix?: string;
+  nextLrSeq?: number;
+  logoDataUrl?: string;
   defaultDieselRate?: number;
   terms: string;
   ownerId: string;
@@ -365,6 +450,11 @@ export interface ErpUser {
   email: string;
   displayName: string;
   role: ErpUserRole;
+  recipientRole?: ExpiryRecipientRole;
+  phone?: string;
+  expiryAlertScope?: ExpiryAlertScope;
+  assignedVehicleIds?: string[];
+  assignedDriverId?: string;
   status: ErpUserStatus;
   canEditTrips: boolean;
   canDeleteRecords: boolean;
@@ -373,6 +463,43 @@ export interface ErpUser {
   canExportData: boolean;
   canManageMasters: boolean;
   addedBy: string;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
+
+export interface NotificationPreference {
+  id: string;
+  userId: string;
+  email: string;
+  displayName: string;
+  phone: string;
+  inAppEnabled: boolean;
+  emailEnabled: boolean;
+  whatsappEnabled: boolean;
+  remindFiveDaysBefore: boolean;
+  remindOnExpiryDate: boolean;
+  remindOverdue: boolean;
+  ownerId: string;
+  updatedAt: Timestamp | null;
+}
+
+export interface ExpiryNotificationRecord {
+  id: string;
+  dedupKey: string;
+  vehicleId: string;
+  vehicleNumber: string;
+  documentType: VehicleDocumentType;
+  expiryDate: string;
+  triggerType: ExpiryTriggerType;
+  recipientRole: ExpiryRecipientRole;
+  recipientId: string;
+  recipientName: string;
+  recipientEmail: string;
+  recipientPhone: string;
+  channel: NotificationChannel;
+  deliveryStatus: NotificationDeliveryStatus;
+  statusNote: string;
+  ownerId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 }
@@ -466,6 +593,10 @@ export interface ImportedSheetRow {
 
 export interface UserPermissions {
   role: ErpUserRole;
+  recipientRole: ExpiryRecipientRole;
+  expiryAlertScope: ExpiryAlertScope;
+  assignedVehicleIds: string[];
+  assignedDriverId: string;
   isAdmin: boolean;
   isSuspended: boolean;
   canEditTrips: boolean;

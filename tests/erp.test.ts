@@ -39,13 +39,45 @@ import {
   normalizeWhatsAppPhone,
 } from '../src/utils/whatsappShare';
 import {
+  buildLorryReceiptWhatsAppMessage,
+  calculateLrBalance,
+  filterLorryReceipts,
+  findDuplicateLorryReceipt,
+  generateNextUniqueLrNumber,
+  isValidCompanyLogoDataUrl,
+  LR_COMPANY_NAME,
+  LR_CONTACT_LEFT,
+  LR_CONTACT_RIGHT,
+  LR_DEVOTIONAL_HEADER,
+} from '../src/utils/lorryReceiptHelpers';
+import {
+  buildExpiryDedupKey,
+  buildExpiryEmailContent,
+  buildExpiryWhatsAppMessage,
+  buildManualMailtoUrl,
+  buildVehicleDocumentExpiryAlerts,
+  filterNotificationHistoryForUser,
+  getDaysUntilExpiryRelative,
+  getExpiryTriggerType,
+  hasDuplicateExpiryNotification,
+  hasValidRecipientPhone,
+  resolveAuthorizedRecipientsForVehicle,
+  resolveAuthorizedVehiclesForUser,
+} from '../src/utils/expiryNotifications';
+import {
   DEFAULT_DIESEL_RATE,
   type Bill,
   type CompanySettings,
+  type Driver,
+  type ErpUser,
+  type ExpiryNotificationRecord,
   type ImportedSheetRow,
+  type LorryReceipt,
+  type NotificationPreference,
   type Party,
   type PartyPayment,
   type Trip,
+  type UserPermissions,
   type Vehicle,
 } from '../src/types/erp';
 
@@ -1655,6 +1687,747 @@ test('WhatsApp Feature 2 (Bill PDF Sharing) builds real PDF File attachment and 
   assert.match(shareUtilSrc, /navigator\.share\(/);
   assert.match(shareUtilSrc, /navigator\.canShare\(/);
 });
+
+test('Lorry Receipt (LR) numbering prevents duplicates across lorryReceipts and trips, calculates balance, and filters cleanly', () => {
+  const existingLrs: LorryReceipt[] = [
+    {
+      id: 'lr_1',
+      lrNumber: 'BSE-LR-0001',
+      lrDate: '2026-06-15',
+      vehicleId: 'veh_1',
+      vehicleNumber: 'GJ-03-BW-4312',
+      tripId: 'trp_1',
+      tripRefLr: 'LR-4201',
+      consignorPartyId: 'pty_1',
+      consignorName: 'Shree Ceramic Pvt Ltd',
+      consignorAddress: '8-A National Highway, Morbi, Gujarat',
+      consignorPhone: '9825011223',
+      consigneePartyId: 'pty_2',
+      consigneeName: 'Mundra Export Hub',
+      consigneeAddress: 'Plot 14, Mundra Port SEZ, Kutch',
+      consigneePhone: '9825099887',
+      origin: 'Morbi',
+      destination: 'Mundra Port',
+      containerNo: 'MSCU7788991',
+      goodsDescription: 'Ceramic Floor Tiles (1200 Boxes)',
+      quantityWeight: '26 MT',
+      freightRate: 45000,
+      totalFreightAmount: 45000,
+      advanceAmount: 10000,
+      balanceAmount: 35000,
+      driverName: 'Rameshbhai Patel',
+      driverMobile: '9876543210',
+      remarks: 'Deliver before 6 PM',
+      senderSignature: 'Maheshbhai',
+      receiverSignature: 'Karanbhai',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'lr_2',
+      lrNumber: 'BSE-LR-0002',
+      lrDate: '2026-06-18',
+      vehicleId: 'veh_2',
+      vehicleNumber: 'GJ-12-AZ-9901',
+      tripId: '',
+      tripRefLr: '',
+      consignorPartyId: '',
+      consignorName: 'Kutch Minerals',
+      consignorAddress: 'Gandhidham, Gujarat',
+      consignorPhone: '9898112233',
+      consigneePartyId: '',
+      consigneeName: 'Rajkot Sanitaryware',
+      consigneeAddress: 'Shapar GIDC, Rajkot',
+      consigneePhone: '9898445566',
+      origin: 'Gandhidham',
+      destination: 'Rajkot',
+      containerNo: '',
+      goodsDescription: 'Silica Raw Material',
+      quantityWeight: '22 MT',
+      freightRate: 28000,
+      totalFreightAmount: 28000,
+      advanceAmount: 5000,
+      balanceAmount: 23000,
+      driverName: 'Vikram Sinh',
+      driverMobile: '9725001122',
+      remarks: '',
+      senderSignature: '',
+      receiverSignature: '',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+  ];
+
+  // Auto-generation skips existing LR numbers in both lorryReceipts AND trips
+  const gen1 = generateNextUniqueLrNumber(
+    existingLrs,
+    [{ lrNumber: 'BSE-LR-0003' }],
+    { lrPrefix: 'BSE-LR-', nextLrSeq: 1 }
+  );
+  assert.equal(gen1.lrNumber, 'BSE-LR-0004');
+  assert.equal(gen1.nextSeq, 5);
+
+  // Duplicate LR detection (case-insensitive & whitespace normalized)
+  assert.ok(findDuplicateLorryReceipt(existingLrs, ' bse-lr-0001 '));
+  assert.equal(findDuplicateLorryReceipt(existingLrs, 'BSE-LR-0001', 'lr_1'), undefined);
+  assert.equal(findDuplicateLorryReceipt(existingLrs, 'BSE-LR-0099'), undefined);
+
+  // Exact balance calculation
+  assert.equal(calculateLrBalance(45000, 10000), 35000);
+  assert.equal(calculateLrBalance(45000.75, 10000.25), 35000.5);
+
+  // Search by LR number, date range, party (consignor/consignee), and vehicle
+  assert.equal(filterLorryReceipts(existingLrs, { searchQuery: 'BSE-LR-0002' }).length, 1);
+  assert.equal(filterLorryReceipts(existingLrs, { searchQuery: 'Mundra Export Hub' }).length, 1);
+  assert.equal(filterLorryReceipts(existingLrs, { searchQuery: 'Shree Ceramic' }).length, 1);
+  assert.equal(filterLorryReceipts(existingLrs, { vehicleFilter: 'GJ-03-BW-4312' }).length, 1);
+  assert.equal(
+    filterLorryReceipts(existingLrs, { fromDate: '2026-06-17', toDate: '2026-06-20' }).length,
+    1
+  );
+
+  // WhatsApp LR message contains branding, contacts, route & amounts, and ZERO bank details / QR codes
+  const waMsg = buildLorryReceiptWhatsAppMessage(existingLrs[0], 'LR-BSE-LR-0001-GJ-03-BW-4312.pdf');
+  assert.ok(waMsg.includes(LR_DEVOTIONAL_HEADER));
+  assert.ok(waMsg.includes(LR_COMPANY_NAME));
+  assert.ok(waMsg.includes(LR_CONTACT_LEFT));
+  assert.ok(waMsg.includes(LR_CONTACT_RIGHT));
+  assert.ok(waMsg.includes('BSE-LR-0001'));
+  assert.ok(waMsg.includes('GJ-03-BW-4312'));
+  assert.ok(waMsg.includes('MSCU7788991'));
+  assert.ok(waMsg.includes('45,000.00'));
+  assert.ok(waMsg.includes('35,000.00'));
+  assert.equal(/IFSC|Account No|A\/c No|QR Code/i.test(waMsg), false);
+
+  // Logo data URL validator enforces safe PNG/JPEG/WebP and rejects invalid/oversized strings
+  assert.equal(isValidCompanyLogoDataUrl(''), true);
+  assert.equal(isValidCompanyLogoDataUrl('data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='), true);
+  assert.equal(isValidCompanyLogoDataUrl('data:image/svg+xml;base64,PHN2Zz4='), false);
+  assert.equal(isValidCompanyLogoDataUrl('https://evil.example/logo.png'), false);
+});
+
+test('LorryReceiptsView, LayoutShell, App, blueprint, and firestore.rules enforce branding, all 19 LR fields, Admin logo & edit permissions, and no inline styles', () => {
+  const lrViewSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/LorryReceiptsView.tsx'),
+    'utf8'
+  );
+  const helpersSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/utils/lorryReceiptHelpers.ts'),
+    'utf8'
+  );
+  const layoutSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/LayoutShell.tsx'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+  const rulesSrc = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
+  const blueprintSrc = fs.readFileSync(path.join(ROOT_DIR, 'firebase-blueprint.json'), 'utf8');
+  const indexHtmlSrc = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+
+  // Branding & Gujarati font
+  assert.ok(helpersSrc.includes('|| માં આશાપુરા || માં મોગલ || માં ગાત્રોળ ||'));
+  assert.ok(helpersSrc.includes('BAPASITARAM ENTERPRISE'));
+  assert.ok(helpersSrc.includes('9537379915'));
+  assert.ok(helpersSrc.includes('8128202784'));
+  assert.match(indexHtmlSrc, /Noto\+Sans\+Gujarati/);
+
+  // Royal Blue & White styling, zero inline styles, zero window.open/alert
+  assert.match(lrViewSrc, /bg-blue-900/);
+  assert.match(lrViewSrc, /border-blue-900/);
+  assert.doesNotMatch(lrViewSrc, /style=\{\{/);
+  assert.doesNotMatch(lrViewSrc, /window\.open\(/);
+  assert.doesNotMatch(lrViewSrc, /window\.alert\(/);
+
+  // All 19 LR form fields + Admin logo upload + A4 PDF/Print/WhatsApp
+  assert.match(lrViewSrc, /1\. LR Number/);
+  assert.match(lrViewSrc, /2\. LR Date/);
+  assert.match(lrViewSrc, /3\. Vehicle Number/);
+  assert.match(lrViewSrc, /4\. Consignor/);
+  assert.match(lrViewSrc, /5\. Consignee/);
+  assert.match(lrViewSrc, /6\. From/);
+  assert.match(lrViewSrc, /7\. To/);
+  assert.match(lrViewSrc, /8\. Container Number/);
+  assert.match(lrViewSrc, /9\. Goods Description/);
+  assert.match(lrViewSrc, /10\. Quantity \/ Weight/);
+  assert.match(lrViewSrc, /11\. Freight Rate/);
+  assert.match(lrViewSrc, /12\. Total Freight Amount/);
+  assert.match(lrViewSrc, /13\. Advance Amount/);
+  assert.match(lrViewSrc, /14\. Balance Amount/);
+  assert.match(lrViewSrc, /15\. Driver Name/);
+  assert.match(lrViewSrc, /16\. Driver Mobile Number/);
+  assert.match(lrViewSrc, /17\. Remarks/);
+  assert.match(lrViewSrc, /18\. Sender Signature/);
+  assert.match(lrViewSrc, /19\. Receiver Signature/);
+  assert.match(lrViewSrc, /Admin Company Logo Upload/);
+  assert.match(lrViewSrc, /const canEditLr = permissions\.isAdmin/);
+  assert.match(lrViewSrc, /const canManageBranding = permissions\.isAdmin/);
+  assert.match(lrViewSrc, /lorry-receipt-a4-sheet/);
+  assert.match(lrViewSrc, /renderElementToA4Pdf/);
+  assert.match(lrViewSrc, /triggerPrintPreview/);
+  assert.match(lrViewSrc, /<PdfPreviewModal/);
+  assert.match(lrViewSrc, /<WhatsAppShareModal/);
+
+  // Separate from Billing module & wired cleanly
+  assert.match(layoutSrc, /Lorry Receipt \(LR\)/);
+  assert.match(appSrc, /lorryReceipts/);
+  assert.match(appSrc, /<LorryReceiptsView/);
+
+  // Hardened Firestore rules & blueprint
+  assert.match(rulesSrc, /function isValidLorryReceipt\(data\)/);
+  assert.match(rulesSrc, /match \/lorryReceipts\/\{lrId\}/);
+  assert.match(rulesSrc, /logoDataUrl/);
+  assert.match(blueprintSrc, /"LorryReceipt"/);
+  assert.match(blueprintSrc, /"\/lorryReceipts\/\{lrId\}"/);
+});
+
+test('Vehicle Document Expiry Notifications enforce Admin/Driver/Office Staff permissions, 5d/today/overdue timing, renewal clearing, deduplication, and contact safety', () => {
+  const todayISO = '2026-07-10';
+
+  // Timing window checks
+  assert.equal(getDaysUntilExpiryRelative('2026-07-15', todayISO), 5);
+  assert.equal(getExpiryTriggerType(5), '5_days_before');
+  assert.equal(getExpiryTriggerType(1), '5_days_before');
+  assert.equal(getExpiryTriggerType(0), 'on_expiry');
+  assert.equal(getExpiryTriggerType(-1), 'overdue');
+  assert.equal(getExpiryTriggerType(-30), 'overdue');
+  assert.equal(getExpiryTriggerType(6), null); // Beyond 5-day window (renewed)
+  assert.equal(getExpiryTriggerType(90), null);
+
+  const vehicles: Vehicle[] = [
+    {
+      id: 'veh_1',
+      registrationNumber: 'GJ-03-BW-4312',
+      vehicleType: 'Truck',
+      makeModel: 'Tata Prima',
+      capacityTons: 25,
+      driverName: 'Rameshbhai',
+      driverPhone: '9825011111',
+      fitnessExpiry: '2026-07-15', // 5 days before -> '5_days_before'
+      insuranceExpiry: '2026-07-10', // Today -> 'on_expiry'
+      permitExpiry: '2026-07-05', // 5 days overdue -> 'overdue'
+      pucExpiry: '2026-12-31', // Valid (>5 days) -> no alert
+      taxExpiry: '2026-10-01', // Valid -> no alert
+      status: 'Available',
+      notes: '',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'veh_2',
+      registrationNumber: 'GJ-12-AZ-9900',
+      vehicleType: 'Trailer',
+      makeModel: 'Ashok Leyland',
+      capacityTons: 35,
+      driverName: 'Sureshbhai',
+      driverPhone: '', // Deliberately blank — must NEVER be invented
+      fitnessExpiry: '2026-07-08', // Overdue -> 'overdue'
+      insuranceExpiry: '2026-11-20',
+      permitExpiry: '2026-11-20',
+      pucExpiry: '2026-11-20',
+      taxExpiry: '2026-11-20',
+      status: 'On Trip',
+      notes: '',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'veh_3',
+      registrationNumber: 'GJ-36-T-5555',
+      vehicleType: 'Container',
+      makeModel: 'BharatBenz',
+      capacityTons: 30,
+      driverName: 'Mahesh',
+      driverPhone: '9825033333',
+      fitnessExpiry: '2027-01-01', // All renewed > 5 days -> zero alerts
+      insuranceExpiry: '2027-01-01',
+      permitExpiry: '2027-01-01',
+      pucExpiry: '2027-01-01',
+      taxExpiry: '2027-01-01',
+      status: 'Available',
+      notes: '',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+  ];
+
+  const drivers: Driver[] = [
+    {
+      id: 'drv_1',
+      driverName: 'Rameshbhai',
+      phone: '9825011111',
+      licenseNumber: 'GJ0320180001',
+      licenseExpiry: '2028-01-01',
+      assignedVehicleId: 'veh_1',
+      assignedVehicleNumber: 'GJ-03-BW-4312',
+      monthlySalary: 22000,
+      openingBalance: 0,
+      status: 'Active',
+      notes: '',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'drv_2',
+      driverName: 'Sureshbhai',
+      phone: '',
+      licenseNumber: 'GJ1220190002',
+      licenseExpiry: '2028-01-01',
+      assignedVehicleId: 'veh_2',
+      assignedVehicleNumber: 'GJ-12-AZ-9900',
+      monthlySalary: 24000,
+      openingBalance: 0,
+      status: 'Active',
+      notes: '',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+  ];
+
+  const erpUsers: ErpUser[] = [
+    {
+      id: 'usr_staff_assigned',
+      email: 'staff1@bapasitaram.in',
+      displayName: 'Kiran Staff',
+      role: 'employee',
+      recipientRole: 'office_staff',
+      phone: '9825022222',
+      expiryAlertScope: 'assigned',
+      assignedVehicleIds: ['veh_2'],
+      assignedDriverId: '',
+      status: 'Active',
+      canEditTrips: true,
+      canDeleteRecords: false,
+      canManageBilling: false,
+      canImportExcel: false,
+      canExportData: true,
+      canManageMasters: false,
+      addedBy: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'usr_staff_all',
+      email: 'manager@bapasitaram.in',
+      displayName: 'Fleet Manager',
+      role: 'employee',
+      recipientRole: 'office_staff',
+      phone: '',
+      expiryAlertScope: 'all',
+      assignedVehicleIds: [],
+      assignedDriverId: '',
+      status: 'Active',
+      canEditTrips: true,
+      canDeleteRecords: false,
+      canManageBilling: true,
+      canImportExcel: false,
+      canExportData: true,
+      canManageMasters: true,
+      addedBy: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'usr_staff_none',
+      email: 'restricted@bapasitaram.in',
+      displayName: 'Restricted Clerk',
+      role: 'employee',
+      recipientRole: 'office_staff',
+      phone: '',
+      expiryAlertScope: 'none',
+      assignedVehicleIds: ['veh_1'],
+      assignedDriverId: '',
+      status: 'Active',
+      canEditTrips: false,
+      canDeleteRecords: false,
+      canManageBilling: false,
+      canImportExcel: false,
+      canExportData: false,
+      canManageMasters: false,
+      addedBy: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'usr_driver_1',
+      email: 'ramesh.driver@gmail.com',
+      displayName: 'Rameshbhai',
+      role: 'employee',
+      recipientRole: 'driver',
+      phone: '9825011111',
+      expiryAlertScope: 'assigned',
+      assignedVehicleIds: ['veh_1'],
+      assignedDriverId: 'drv_1',
+      status: 'Active',
+      canEditTrips: false,
+      canDeleteRecords: false,
+      canManageBilling: false,
+      canImportExcel: false,
+      canExportData: false,
+      canManageMasters: false,
+      addedBy: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+  ];
+
+  const basePerm = {
+    isSuspended: false,
+    canEditTrips: false,
+    canDeleteRecords: false,
+    canManageBilling: false,
+    canImportExcel: false,
+    canExportData: false,
+    canManageMasters: false,
+  };
+
+  const adminPerms: UserPermissions = {
+    ...basePerm,
+    role: 'admin',
+    recipientRole: 'admin',
+    expiryAlertScope: 'all',
+    assignedVehicleIds: [],
+    assignedDriverId: '',
+    isAdmin: true,
+  };
+
+  const driver1Perms: UserPermissions = {
+    ...basePerm,
+    role: 'employee',
+    recipientRole: 'driver',
+    expiryAlertScope: 'assigned',
+    assignedVehicleIds: ['veh_1'],
+    assignedDriverId: 'drv_1',
+    isAdmin: false,
+  };
+
+  const staffAssignedPerms: UserPermissions = {
+    ...basePerm,
+    role: 'employee',
+    recipientRole: 'office_staff',
+    expiryAlertScope: 'assigned',
+    assignedVehicleIds: ['veh_2'],
+    assignedDriverId: '',
+    isAdmin: false,
+  };
+
+  const staffAllPerms: UserPermissions = {
+    ...basePerm,
+    role: 'employee',
+    recipientRole: 'office_staff',
+    expiryAlertScope: 'all',
+    assignedVehicleIds: [],
+    assignedDriverId: '',
+    isAdmin: false,
+  };
+
+  const staffNonePerms: UserPermissions = {
+    ...basePerm,
+    role: 'employee',
+    recipientRole: 'office_staff',
+    expiryAlertScope: 'none',
+    assignedVehicleIds: ['veh_1'],
+    assignedDriverId: '',
+    isAdmin: false,
+  };
+
+  // 1. Admin sees ALL vehicles & ALL 4 alerts (veh_1: Permit overdue, Insurance today, Fitness 5d; veh_2: Fitness overdue; veh_3: 0 renewed)
+  assert.equal(resolveAuthorizedVehiclesForUser({ vehicles, drivers, permissions: adminPerms }).length, 3);
+  const adminAlerts = buildVehicleDocumentExpiryAlerts({
+    vehicles,
+    drivers,
+    erpUsers,
+    preferences: [],
+    permissions: adminPerms,
+    activeUserEmail: 'nilgajra143@gmail.com',
+    activeUserId: 'uid_admin',
+    activeUserName: 'Admin',
+    adminUser: { userId: 'uid_admin', email: 'nilgajra143@gmail.com', displayName: 'Admin' },
+    todayISO,
+  });
+  assert.equal(adminAlerts.length, 4);
+  assert.equal(adminAlerts[0].triggerType, 'overdue');
+  assert.ok(adminAlerts.some((a) => a.vehicleId === 'veh_1' && a.documentType === 'Fitness' && a.triggerType === '5_days_before'));
+  assert.ok(adminAlerts.some((a) => a.vehicleId === 'veh_1' && a.documentType === 'Insurance' && a.triggerType === 'on_expiry'));
+  assert.ok(adminAlerts.some((a) => a.vehicleId === 'veh_1' && a.documentType === 'Permit' && a.triggerType === 'overdue'));
+  assert.ok(adminAlerts.some((a) => a.vehicleId === 'veh_2' && a.documentType === 'Fitness' && a.triggerType === 'overdue'));
+
+  // 2. Driver sees ONLY assigned vehicle (veh_1) — NEVER veh_2 or other staff contacts
+  const driverVehicles = resolveAuthorizedVehiclesForUser({ vehicles, drivers, permissions: driver1Perms });
+  assert.deepEqual(driverVehicles.map((v) => v.id), ['veh_1']);
+  const driverAlerts = buildVehicleDocumentExpiryAlerts({
+    vehicles,
+    drivers,
+    erpUsers,
+    preferences: [],
+    permissions: driver1Perms,
+    activeUserEmail: 'ramesh.driver@gmail.com',
+    activeUserId: 'uid_drv_1',
+    activeUserName: 'Rameshbhai',
+    todayISO,
+  });
+  assert.equal(driverAlerts.length, 3);
+  assert.equal(driverAlerts.every((a) => a.vehicleId === 'veh_1'), true);
+  assert.equal(driverAlerts.every((a) => a.recipients.length === 1 && a.recipients[0].recipientRole === 'driver'), true);
+
+  // 3. Office Staff ('assigned') sees ONLY veh_2 (never veh_1!)
+  const staffAssignedAlerts = buildVehicleDocumentExpiryAlerts({
+    vehicles,
+    drivers,
+    erpUsers,
+    preferences: [],
+    permissions: staffAssignedPerms,
+    activeUserEmail: 'staff1@bapasitaram.in',
+    activeUserId: 'uid_staff_1',
+    activeUserName: 'Kiran Staff',
+    todayISO,
+  });
+  assert.equal(staffAssignedAlerts.length, 1);
+  assert.equal(staffAssignedAlerts[0].vehicleId, 'veh_2');
+
+  // 4. Office Staff ('all') sees all fleet alerts; Office Staff ('none') sees ZERO alerts
+  assert.equal(resolveAuthorizedVehiclesForUser({ vehicles, drivers, permissions: staffAllPerms }).length, 3);
+  assert.equal(resolveAuthorizedVehiclesForUser({ vehicles, drivers, permissions: staffNonePerms }).length, 0);
+
+  // 5. Recipient resolution per vehicle: veh_1 includes Admin + Driver Ramesh + Fleet Manager (all), NEVER Kiran Staff (assigned to veh_2) or Restricted Clerk
+  const veh1Recipients = resolveAuthorizedRecipientsForVehicle({
+    vehicle: vehicles[0],
+    drivers,
+    erpUsers,
+    preferences: [],
+    adminUser: { userId: 'uid_admin', email: 'nilgajra143@gmail.com', displayName: 'Admin' },
+  });
+  assert.ok(veh1Recipients.some((r) => r.recipientRole === 'admin' && r.recipientEmail === 'nilgajra143@gmail.com'));
+  assert.ok(veh1Recipients.some((r) => r.recipientRole === 'driver' && r.recipientName === 'Rameshbhai' && r.recipientPhone === '9825011111'));
+  assert.ok(veh1Recipients.some((r) => r.recipientRole === 'office_staff' && r.recipientEmail === 'manager@bapasitaram.in'));
+  assert.equal(veh1Recipients.some((r) => r.recipientEmail === 'staff1@bapasitaram.in'), false);
+  assert.equal(veh1Recipients.some((r) => r.recipientEmail === 'restricted@bapasitaram.in'), false);
+
+  // 6. Contact safety: veh_2 driver Suresh has NO phone & NO email — NEVER invented!
+  const veh2Recipients = resolveAuthorizedRecipientsForVehicle({
+    vehicle: vehicles[1],
+    drivers,
+    erpUsers,
+    preferences: [],
+    adminUser: { userId: 'uid_admin', email: 'nilgajra143@gmail.com', displayName: 'Admin' },
+  });
+  const sureshRec = veh2Recipients.find((r) => r.recipientRole === 'driver');
+  assert.ok(sureshRec);
+  assert.equal(sureshRec.recipientPhone, '');
+  assert.equal(sureshRec.recipientEmail, '');
+  assert.equal(hasValidRecipientPhone(sureshRec.recipientPhone), false);
+  assert.equal(buildManualMailtoUrl(sureshRec.recipientEmail, 'Test', 'Body'), null);
+
+  // 7. Renewing veh_2 Fitness to future (>5 days) immediately clears its overdue alert
+  const renewedVehicles = vehicles.map((v) =>
+    v.id === 'veh_2' ? { ...v, fitnessExpiry: '2027-07-08' } : v
+  );
+  const afterRenewalAlerts = buildVehicleDocumentExpiryAlerts({
+    vehicles: renewedVehicles,
+    drivers,
+    erpUsers,
+    preferences: [],
+    permissions: staffAssignedPerms,
+    activeUserEmail: 'staff1@bapasitaram.in',
+    activeUserId: 'uid_staff_1',
+    activeUserName: 'Kiran Staff',
+    todayISO,
+  });
+  assert.equal(afterRenewalAlerts.length, 0);
+
+  // 8. Per-user preference filtering respects remindFiveDaysBefore / inAppEnabled toggles
+  const muted5DayPref: NotificationPreference = {
+    id: 'uid_drv_1',
+    userId: 'uid_drv_1',
+    email: 'ramesh.driver@gmail.com',
+    displayName: 'Rameshbhai',
+    phone: '9825011111',
+    inAppEnabled: true,
+    emailEnabled: true,
+    whatsappEnabled: true,
+    remindFiveDaysBefore: false,
+    remindOnExpiryDate: true,
+    remindOverdue: true,
+    ownerId: 'uid_drv_1',
+    updatedAt: null,
+  };
+  const driverWithPrefAlerts = buildVehicleDocumentExpiryAlerts({
+    vehicles,
+    drivers,
+    erpUsers,
+    preferences: [muted5DayPref],
+    permissions: driver1Perms,
+    activeUserEmail: 'ramesh.driver@gmail.com',
+    activeUserId: 'uid_drv_1',
+    activeUserName: 'Rameshbhai',
+    todayISO,
+    respectActiveUserPreferences: true,
+  });
+  assert.equal(driverWithPrefAlerts.length, 2); // Only overdue + on_expiry remain
+  assert.equal(driverWithPrefAlerts.some((a) => a.triggerType === '5_days_before'), false);
+
+  // 9. Duplicate notification prevention & renewal reset
+  const dedup1 = buildExpiryDedupKey({
+    vehicleId: 'veh_1',
+    documentType: 'Insurance',
+    expiryDate: '2026-07-10',
+    recipientRole: 'driver',
+    recipientId: 'drv_1',
+    triggerType: 'on_expiry',
+    channel: 'WhatsApp (Manual)',
+  });
+  const dedupRenewed = buildExpiryDedupKey({
+    vehicleId: 'veh_1',
+    documentType: 'Insurance',
+    expiryDate: '2027-07-10',
+    recipientRole: 'driver',
+    recipientId: 'drv_1',
+    triggerType: 'on_expiry',
+    channel: 'WhatsApp (Manual)',
+  });
+  assert.notEqual(dedup1, dedupRenewed);
+
+  const history: ExpiryNotificationRecord[] = [
+    {
+      id: 'ntf_1',
+      dedupKey: dedup1,
+      vehicleId: 'veh_1',
+      vehicleNumber: 'GJ-03-BW-4312',
+      documentType: 'Insurance',
+      expiryDate: '2026-07-10',
+      triggerType: 'on_expiry',
+      recipientRole: 'driver',
+      recipientId: 'drv_1',
+      recipientName: 'Rameshbhai',
+      recipientEmail: 'ramesh.driver@gmail.com',
+      recipientPhone: '9825011111',
+      channel: 'WhatsApp (Manual)',
+      deliveryStatus: 'Prepared (Manual)',
+      statusNote: 'Manual share prepared',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+    {
+      id: 'ntf_2',
+      dedupKey: 'veh_2|fitness|2026-07-08|office_staff|usr_staff_assigned|overdue|email',
+      vehicleId: 'veh_2',
+      vehicleNumber: 'GJ-12-AZ-9900',
+      documentType: 'Fitness',
+      expiryDate: '2026-07-08',
+      triggerType: 'overdue',
+      recipientRole: 'office_staff',
+      recipientId: 'usr_staff_assigned',
+      recipientName: 'Kiran Staff',
+      recipientEmail: 'staff1@bapasitaram.in',
+      recipientPhone: '9825022222',
+      channel: 'Email',
+      deliveryStatus: 'Sent',
+      statusNote: 'Sent',
+      ownerId: 'uid_admin',
+      createdAt: null,
+      updatedAt: null,
+    },
+  ];
+  assert.equal(hasDuplicateExpiryNotification(history, dedup1), true);
+  assert.equal(hasDuplicateExpiryNotification(history, dedupRenewed), false);
+
+  // 10. History scoping prevents cross-user & cross-vehicle exposure
+  const driverHistory = filterNotificationHistoryForUser({
+    history,
+    permissions: driver1Perms,
+    userId: 'uid_drv_1',
+    userEmail: 'ramesh.driver@gmail.com',
+    authorizedVehicleIds: new Set(['veh_1']),
+  });
+  assert.deepEqual(driverHistory.map((h) => h.id), ['ntf_1']);
+
+  const staffHistory = filterNotificationHistoryForUser({
+    history,
+    permissions: staffAssignedPerms,
+    userId: 'uid_staff_1',
+    userEmail: 'staff1@bapasitaram.in',
+    authorizedVehicleIds: new Set(['veh_2']),
+  });
+  assert.deepEqual(staffHistory.map((h) => h.id), ['ntf_2']);
+
+  // 11. WhatsApp & Email message builders include vehicle, doc type, expiry date, and urgency status
+  const waMsg = buildExpiryWhatsAppMessage({
+    alert: adminAlerts[0],
+    recipient: veh1Recipients[0],
+  });
+  assert.ok(waMsg.includes('BAPASITARAM ENTERPRISE'));
+  assert.ok(waMsg.includes(adminAlerts[0].vehicleNumber));
+  assert.ok(waMsg.includes(adminAlerts[0].documentType));
+
+  const emailObj = buildExpiryEmailContent({
+    alert: adminAlerts[0],
+    recipient: veh1Recipients[0],
+  });
+  assert.ok(emailObj.subject.includes(adminAlerts[0].vehicleNumber));
+  const mailto = buildManualMailtoUrl('nilgajra143@gmail.com', emailObj.subject, emailObj.body);
+  assert.ok(mailto?.startsWith('mailto:nilgajra143%40gmail.com?subject='));
+});
+
+test('ExpiryNotificationsView, DashboardView, SecurityBackupView, server.ts, blueprint, and firestore.rules satisfy security and UI constraints', () => {
+  const expiryViewSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/ExpiryNotificationsView.tsx'),
+    'utf8'
+  );
+  const dashboardSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/DashboardView.tsx'),
+    'utf8'
+  );
+  const securitySrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/SecurityBackupView.tsx'),
+    'utf8'
+  );
+  const appSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+  const serverSrc = fs.readFileSync(path.join(ROOT_DIR, 'server.ts'), 'utf8');
+  const rulesSrc = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
+  const blueprintSrc = fs.readFileSync(path.join(ROOT_DIR, 'firebase-blueprint.json'), 'utf8');
+  const envExampleSrc = fs.readFileSync(path.join(ROOT_DIR, '.env.example'), 'utf8');
+
+  // Zero inline styles, zero window.open, zero window.alert
+  for (const src of [expiryViewSrc, dashboardSrc, securitySrc]) {
+    assert.doesNotMatch(src, /style=\{\{/);
+    assert.doesNotMatch(src, /window\.open\(/);
+    assert.doesNotMatch(src, /window\.alert\(/);
+  }
+
+  // UI wiring assertions
+  assert.match(expiryViewSrc, /<WhatsAppShareModal/);
+  assert.match(expiryViewSrc, /My Preferences/);
+  assert.match(expiryViewSrc, /Notification History/);
+  assert.match(expiryViewSrc, /Recipient Access Control/);
+  assert.match(expiryViewSrc, /\/api\/notifications\/channel-status/);
+  assert.match(expiryViewSrc, /\/api\/notifications\/send/);
+  assert.match(dashboardSrc, /Vehicle Document Expiry Alerts/);
+  assert.match(dashboardSrc, /buildVehicleDocumentExpiryAlerts/);
+  assert.match(dashboardSrc, /<WhatsAppShareModal/);
+  assert.match(appSrc, /notificationPreferences/);
+  assert.match(appSrc, /expiryNotifications/);
+  assert.match(appSrc, /<ExpiryNotificationsView/);
+
+  // Server webhook endpoints stay auth-protected & free-by-default (no paid APIs)
+  assert.match(serverSrc, /\/api\/notifications\/channel-status/);
+  assert.match(serverSrc, /\/api\/notifications\/send/);
+  assert.match(envExampleSrc, /NOTIFICATION_EMAIL_WEBHOOK_URL=/);
+  assert.match(envExampleSrc, /NOTIFICATION_WHATSAPP_WEBHOOK_URL=/);
+
+  // Firestore rules & blueprint hardened
+  assert.match(rulesSrc, /function isValidNotificationPreference\(data\)/);
+  assert.match(rulesSrc, /function isValidExpiryNotification\(data\)/);
+  assert.match(rulesSrc, /match \/notificationPreferences\/\{prefId\}/);
+  assert.match(rulesSrc, /match \/expiryNotifications\/\{notificationId\}/);
+  assert.match(blueprintSrc, /"NotificationPreference"/);
+  assert.match(blueprintSrc, /"ExpiryNotification"/);
+});
+
+
 
 
 

@@ -290,6 +290,57 @@ service cloud.firestore {
       data.updatedAt is timestamp;
     }
 
+    function isValidLorryReceipt(data) {
+      return data.keys().hasAll([
+        'lrNumber', 'lrDate', 'vehicleId', 'vehicleNumber', 'tripId', 'tripRefLr',
+        'consignorPartyId', 'consignorName', 'consignorAddress', 'consignorPhone',
+        'consigneePartyId', 'consigneeName', 'consigneeAddress', 'consigneePhone',
+        'origin', 'destination', 'containerNo', 'goodsDescription', 'quantityWeight',
+        'freightRate', 'totalFreightAmount', 'advanceAmount', 'balanceAmount',
+        'driverName', 'driverMobile', 'remarks', 'senderSignature', 'receiverSignature',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'lrNumber', 'lrDate', 'vehicleId', 'vehicleNumber', 'tripId', 'tripRefLr',
+        'consignorPartyId', 'consignorName', 'consignorAddress', 'consignorPhone',
+        'consigneePartyId', 'consigneeName', 'consigneeAddress', 'consigneePhone',
+        'origin', 'destination', 'containerNo', 'goodsDescription', 'quantityWeight',
+        'freightRate', 'totalFreightAmount', 'advanceAmount', 'balanceAmount',
+        'driverName', 'driverMobile', 'remarks', 'senderSignature', 'receiverSignature',
+        'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.lrNumber is string && data.lrNumber.size() >= 1 && data.lrNumber.size() <= 40 &&
+      data.lrDate is string && data.lrDate.size() >= 4 && data.lrDate.size() <= 20 &&
+      data.vehicleId is string && data.vehicleId.size() <= 128 && (data.vehicleId == '' || isValidId(data.vehicleId)) &&
+      data.vehicleNumber is string && data.vehicleNumber.size() >= 1 && data.vehicleNumber.size() <= 20 &&
+      data.tripId is string && data.tripId.size() <= 128 && (data.tripId == '' || isValidId(data.tripId)) &&
+      data.tripRefLr is string && data.tripRefLr.size() <= 40 &&
+      data.consignorPartyId is string && data.consignorPartyId.size() <= 128 && (data.consignorPartyId == '' || isValidId(data.consignorPartyId)) &&
+      data.consignorName is string && data.consignorName.size() >= 1 && data.consignorName.size() <= 120 &&
+      data.consignorAddress is string && data.consignorAddress.size() <= 300 &&
+      data.consignorPhone is string && data.consignorPhone.size() <= 20 &&
+      data.consigneePartyId is string && data.consigneePartyId.size() <= 128 && (data.consigneePartyId == '' || isValidId(data.consigneePartyId)) &&
+      data.consigneeName is string && data.consigneeName.size() >= 1 && data.consigneeName.size() <= 120 &&
+      data.consigneeAddress is string && data.consigneeAddress.size() <= 300 &&
+      data.consigneePhone is string && data.consigneePhone.size() <= 20 &&
+      data.origin is string && data.origin.size() >= 1 && data.origin.size() <= 100 &&
+      data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 100 &&
+      data.containerNo is string && data.containerNo.size() <= 40 &&
+      data.goodsDescription is string && data.goodsDescription.size() >= 1 && data.goodsDescription.size() <= 250 &&
+      data.quantityWeight is string && data.quantityWeight.size() <= 60 &&
+      data.freightRate is number && data.freightRate >= 0 && data.freightRate <= 100000000 &&
+      data.totalFreightAmount is number && data.totalFreightAmount >= 0 && data.totalFreightAmount <= 100000000 &&
+      data.advanceAmount is number && data.advanceAmount >= 0 && data.advanceAmount <= 100000000 &&
+      data.balanceAmount is number && data.balanceAmount >= -100000000 && data.balanceAmount <= 100000000 &&
+      data.driverName is string && data.driverName.size() <= 80 &&
+      data.driverMobile is string && data.driverMobile.size() <= 20 &&
+      data.remarks is string && data.remarks.size() <= 500 &&
+      data.senderSignature is string && data.senderSignature.size() <= 80 &&
+      data.receiverSignature is string && data.receiverSignature.size() <= 80 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
     function isValidCompanySettings(data) {
       return data.keys().hasAll([
         'companyName', 'address', 'gstin', 'pan', 'phone', 'email',
@@ -298,7 +349,8 @@ service cloud.firestore {
       ]) && data.keys().hasOnly([
         'companyName', 'address', 'gstin', 'pan', 'phone', 'email',
         'bankName', 'accountHolderName', 'accountNumber', 'ifscCode',
-        'branchName', 'billPrefix', 'nextBillSeq', 'defaultDieselRate', 'terms', 'ownerId', 'updatedAt'
+        'branchName', 'billPrefix', 'nextBillSeq', 'lrPrefix', 'nextLrSeq', 'logoDataUrl',
+        'defaultDieselRate', 'terms', 'ownerId', 'updatedAt'
       ]) &&
       data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 120 &&
       data.address is string && data.address.size() <= 300 &&
@@ -313,6 +365,9 @@ service cloud.firestore {
       data.branchName is string && data.branchName.size() <= 100 &&
       data.billPrefix is string && data.billPrefix.size() <= 30 &&
       data.nextBillSeq is number && data.nextBillSeq >= 1 && data.nextBillSeq <= 1000000 &&
+      (!('lrPrefix' in data) || (data.lrPrefix is string && data.lrPrefix.size() <= 30)) &&
+      (!('nextLrSeq' in data) || (data.nextLrSeq is number && data.nextLrSeq >= 1 && data.nextLrSeq <= 1000000)) &&
+      (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 150000 && (data.logoDataUrl == '' || data.logoDataUrl.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$')))) &&
       (!('defaultDieselRate' in data) || (data.defaultDieselRate is number && data.defaultDieselRate >= 0 && data.defaultDieselRate <= 10000)) &&
       data.terms is string && data.terms.size() <= 500 &&
       data.ownerId is string && isValidId(data.ownerId) &&
@@ -336,7 +391,9 @@ service cloud.firestore {
         'canImportExcel', 'canExportData', 'canManageMasters',
         'addedBy', 'createdAt', 'updatedAt'
       ]) && data.keys().hasOnly([
-        'email', 'displayName', 'role', 'status',
+        'email', 'displayName', 'role', 'recipientRole', 'phone',
+        'expiryAlertScope', 'assignedVehicleIds', 'assignedDriverId',
+        'status',
         'canEditTrips', 'canDeleteRecords', 'canManageBilling',
         'canImportExcel', 'canExportData', 'canManageMasters',
         'addedBy', 'createdAt', 'updatedAt'
@@ -344,6 +401,11 @@ service cloud.firestore {
       data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
       data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
       data.role is string && data.role in ['admin', 'employee'] &&
+      (!('recipientRole' in data) || (data.recipientRole is string && data.recipientRole in ['admin', 'office_staff', 'driver'])) &&
+      (!('phone' in data) || (data.phone is string && data.phone.size() <= 20)) &&
+      (!('expiryAlertScope' in data) || (data.expiryAlertScope is string && data.expiryAlertScope in ['assigned', 'all', 'none'])) &&
+      (!('assignedVehicleIds' in data) || (data.assignedVehicleIds is list && data.assignedVehicleIds.size() <= 50 && (data.assignedVehicleIds.size() == 0 || data.assignedVehicleIds[0] is string))) &&
+      (!('assignedDriverId' in data) || (data.assignedDriverId is string && data.assignedDriverId.size() <= 128 && (data.assignedDriverId == '' || isValidId(data.assignedDriverId)))) &&
       data.status is string && data.status in ['Active', 'Suspended'] &&
       data.canEditTrips is bool &&
       data.canDeleteRecords is bool &&
@@ -352,6 +414,63 @@ service cloud.firestore {
       data.canExportData is bool &&
       data.canManageMasters is bool &&
       data.addedBy is string && isValidId(data.addedBy) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidNotificationPreference(data) {
+      return data.keys().hasAll([
+        'userId', 'email', 'displayName', 'phone',
+        'inAppEnabled', 'emailEnabled', 'whatsappEnabled',
+        'remindFiveDaysBefore', 'remindOnExpiryDate', 'remindOverdue',
+        'ownerId', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'userId', 'email', 'displayName', 'phone',
+        'inAppEnabled', 'emailEnabled', 'whatsappEnabled',
+        'remindFiveDaysBefore', 'remindOnExpiryDate', 'remindOverdue',
+        'ownerId', 'updatedAt'
+      ]) &&
+      data.userId is string && isValidId(data.userId) &&
+      data.email is string && data.email.size() <= 120 &&
+      data.displayName is string && data.displayName.size() <= 80 &&
+      data.phone is string && data.phone.size() <= 20 &&
+      data.inAppEnabled is bool &&
+      data.emailEnabled is bool &&
+      data.whatsappEnabled is bool &&
+      data.remindFiveDaysBefore is bool &&
+      data.remindOnExpiryDate is bool &&
+      data.remindOverdue is bool &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidExpiryNotification(data) {
+      return data.keys().hasAll([
+        'dedupKey', 'vehicleId', 'vehicleNumber', 'documentType', 'expiryDate',
+        'triggerType', 'recipientRole', 'recipientId', 'recipientName',
+        'recipientEmail', 'recipientPhone', 'channel', 'deliveryStatus',
+        'statusNote', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'dedupKey', 'vehicleId', 'vehicleNumber', 'documentType', 'expiryDate',
+        'triggerType', 'recipientRole', 'recipientId', 'recipientName',
+        'recipientEmail', 'recipientPhone', 'channel', 'deliveryStatus',
+        'statusNote', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.dedupKey is string && data.dedupKey.size() >= 5 && data.dedupKey.size() <= 240 &&
+      data.vehicleId is string && isValidId(data.vehicleId) &&
+      data.vehicleNumber is string && data.vehicleNumber.size() >= 1 && data.vehicleNumber.size() <= 20 &&
+      data.documentType is string && data.documentType in ['Fitness', 'Insurance', 'PUC', 'Road Tax', 'Permit'] &&
+      data.expiryDate is string && data.expiryDate.size() >= 4 && data.expiryDate.size() <= 20 &&
+      data.triggerType is string && data.triggerType in ['5_days_before', 'on_expiry', 'overdue'] &&
+      data.recipientRole is string && data.recipientRole in ['admin', 'office_staff', 'driver'] &&
+      data.recipientId is string && data.recipientId.size() >= 1 && data.recipientId.size() <= 128 &&
+      data.recipientName is string && data.recipientName.size() >= 1 && data.recipientName.size() <= 120 &&
+      data.recipientEmail is string && data.recipientEmail.size() <= 120 &&
+      data.recipientPhone is string && data.recipientPhone.size() <= 20 &&
+      data.channel is string && data.channel in ['In-App', 'Email', 'WhatsApp (Manual)', 'WhatsApp (API)'] &&
+      data.deliveryStatus is string && data.deliveryStatus in ['Displayed', 'Prepared (Manual)', 'Sent', 'Acknowledged', 'Failed', 'Skipped (No Contact)'] &&
+      data.statusNote is string && data.statusNote.size() <= 300 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
     }
@@ -459,12 +578,98 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'displayName', 'role', 'status',
+          'displayName', 'role', 'recipientRole', 'phone',
+          'expiryAlertScope', 'assignedVehicleIds', 'assignedDriverId',
+          'status',
           'canEditTrips', 'canDeleteRecords', 'canManageBilling',
           'canImportExcel', 'canExportData', 'canManageMasters',
           'updatedAt'
         ]);
       allow delete: if isBootstrapAdmin() && isValidId(userId);
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-User Notification Preferences (PII / Contact Isolated to Owner & Admin)
+    // -------------------------------------------------------------------------
+    match /notificationPreferences/{prefId} {
+      allow get: if isValidId(prefId) && (
+        isAdmin() || (isVerifiedUser() && prefId == request.auth.uid && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(prefId) &&
+        isValidNotificationPreference(incoming()) &&
+        (isAdmin() || prefId == request.auth.uid) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(prefId) &&
+        isValidNotificationPreference(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().userId == existing().userId &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            prefId == request.auth.uid &&
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'phone', 'inAppEnabled', 'emailEnabled', 'whatsappEnabled',
+              'remindFiveDaysBefore', 'remindOnExpiryDate', 'remindOverdue', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(prefId) && isAdmin();
+    }
+
+    // -------------------------------------------------------------------------
+    // Vehicle Document Expiry Notification History (Strictly Recipient-Scoped)
+    // -------------------------------------------------------------------------
+    match /expiryNotifications/{notificationId} {
+      allow get: if isValidId(notificationId) && (
+        isAdmin() ||
+        (
+          isVerifiedUser() && (
+            existing().ownerId == request.auth.uid ||
+            (existing().recipientEmail != '' && existing().recipientEmail == request.auth.token.email)
+          )
+        )
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() ||
+        existing().ownerId == request.auth.uid ||
+        (existing().recipientEmail != '' && existing().recipientEmail == request.auth.token.email)
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(notificationId) &&
+        isValidExpiryNotification(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/vehicles/$(incoming().vehicleId));
+      allow update: if isVerifiedUser() &&
+        isValidId(notificationId) &&
+        isValidExpiryNotification(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().dedupKey == existing().dedupKey &&
+        incoming().vehicleId == existing().vehicleId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            (
+              existing().ownerId == request.auth.uid ||
+              (existing().recipientEmail != '' && existing().recipientEmail == request.auth.token.email)
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'deliveryStatus', 'statusNote', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(notificationId) && isAdmin();
     }
 
     // -------------------------------------------------------------------------
@@ -855,6 +1060,45 @@ service cloud.firestore {
           )
         );
       allow delete: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Lorry Receipts (LR) Collection (Separate from Billing; Admin-Only Edit/Delete)
+    // -------------------------------------------------------------------------
+    match /lorryReceipts/{lrId} {
+      allow get: if isValidId(lrId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(lrId) &&
+        isValidLorryReceipt(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (incoming().tripId == '' || exists(/databases/$(database)/documents/trips/$(incoming().tripId))) &&
+        (incoming().vehicleId == '' || exists(/databases/$(database)/documents/vehicles/$(incoming().vehicleId))) &&
+        (incoming().consignorPartyId == '' || exists(/databases/$(database)/documents/parties/$(incoming().consignorPartyId))) &&
+        (incoming().consigneePartyId == '' || exists(/databases/$(database)/documents/parties/$(incoming().consigneePartyId)));
+      allow update: if isVerifiedUser() &&
+        isValidId(lrId) &&
+        isValidLorryReceipt(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'lrNumber', 'lrDate', 'vehicleId', 'vehicleNumber', 'tripId', 'tripRefLr',
+          'consignorPartyId', 'consignorName', 'consignorAddress', 'consignorPhone',
+          'consigneePartyId', 'consigneeName', 'consigneeAddress', 'consigneePhone',
+          'origin', 'destination', 'containerNo', 'goodsDescription', 'quantityWeight',
+          'freightRate', 'totalFreightAmount', 'advanceAmount', 'balanceAmount',
+          'driverName', 'driverMobile', 'remarks', 'senderSignature', 'receiverSignature',
+          'updatedAt'
+        ]);
+      allow delete: if isValidId(lrId) && isAdmin();
     }
 
     // -------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Outfit", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif;
-  --font-sans: "Plus Jakarta Sans", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "Noto Sans Devanagari", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Outfit", "Noto Sans Gujarati", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif;
+  --font-sans: "Plus Jakarta Sans", "Noto Sans Gujarati", "Noto Sans Devanagari", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Noto Sans Gujarati", "Noto Sans Devanagari", ui-monospace, SFMono-Regular, monospace;
 }
 
 @layer base {

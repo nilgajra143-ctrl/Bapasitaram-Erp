@@ -881,6 +881,20 @@
         "nextBillSeq": {
           "type": "number"
         },
+        "lrPrefix": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Automatic unique Lorry Receipt (LR) number prefix (e.g., BSE-LR-)."
+        },
+        "nextLrSeq": {
+          "type": "number",
+          "description": "Next automatic sequence number for Lorry Receipts."
+        },
+        "logoDataUrl": {
+          "type": "string",
+          "maxLength": 150000,
+          "description": "Admin-uploaded approved company logo encoded as a bounded PNG/JPEG/WebP data URL for LR headers."
+        },
         "defaultDieselRate": {
           "type": "number",
           "description": "Admin-configured default diesel rate per liter in INR (e.g., 98.34)."
@@ -915,6 +929,185 @@
         "nextBillSeq",
         "terms",
         "ownerId",
+        "updatedAt"
+      ]
+    },
+    "LorryReceipt": {
+      "title": "LorryReceipt",
+      "description": "Standalone Lorry Receipt (LR / Consignment Note) for BAPASITARAM ENTERPRISE, optionally linked to an existing Trip and Vehicle without creating duplicate trips or financial entries.",
+      "type": "object",
+      "properties": {
+        "lrNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Automatic unique Lorry Receipt number."
+        },
+        "lrDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20,
+          "description": "LR issue date (YYYY-MM-DD)."
+        },
+        "vehicleId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional linked fleet vehicle document ID."
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "description": "Transport vehicle registration number."
+        },
+        "tripId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional linked existing Trip document ID."
+        },
+        "tripRefLr": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional reference label of the linked Trip."
+        },
+        "consignorPartyId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional linked consignor party document ID."
+        },
+        "consignorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "consignorAddress": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "consignorPhone": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "consigneePartyId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional linked consignee party document ID."
+        },
+        "consigneeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "consigneeAddress": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "consigneePhone": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Dispatch origin location (From)."
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Delivery destination location (To)."
+        },
+        "containerNo": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "goodsDescription": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "quantityWeight": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "freightRate": {
+          "type": "number"
+        },
+        "totalFreightAmount": {
+          "type": "number"
+        },
+        "advanceAmount": {
+          "type": "number"
+        },
+        "balanceAmount": {
+          "type": "number"
+        },
+        "driverName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "driverMobile": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "remarks": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "senderSignature": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "receiverSignature": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "lrNumber",
+        "lrDate",
+        "vehicleId",
+        "vehicleNumber",
+        "tripId",
+        "tripRefLr",
+        "consignorPartyId",
+        "consignorName",
+        "consignorAddress",
+        "consignorPhone",
+        "consigneePartyId",
+        "consigneeName",
+        "consigneeAddress",
+        "consigneePhone",
+        "origin",
+        "destination",
+        "containerNo",
+        "goodsDescription",
+        "quantityWeight",
+        "freightRate",
+        "totalFreightAmount",
+        "advanceAmount",
+        "balanceAmount",
+        "driverName",
+        "driverMobile",
+        "remarks",
+        "senderSignature",
+        "receiverSignature",
+        "ownerId",
+        "createdAt",
         "updatedAt"
       ]
     },
@@ -971,6 +1164,30 @@
           "type": "string",
           "enum": ["admin", "employee"]
         },
+        "recipientRole": {
+          "type": "string",
+          "enum": ["admin", "office_staff", "driver"],
+          "description": "Recipient tier for vehicle document expiry notifications."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Optional real saved mobile number for manual or configured WhatsApp reminders."
+        },
+        "expiryAlertScope": {
+          "type": "string",
+          "enum": ["assigned", "all", "none"],
+          "description": "Admin-configurable vehicle document expiry visibility for office staff."
+        },
+        "assignedVehicleIds": {
+          "type": "array",
+          "description": "Bounded list (max 50) of vehicle document IDs assigned to this staff or driver account."
+        },
+        "assignedDriverId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional Driver document ID linked to this account for single-vehicle driver alerts."
+        },
         "status": {
           "type": "string",
           "enum": ["Active", "Suspended"]
@@ -1007,6 +1224,161 @@
         "canExportData",
         "canManageMasters",
         "addedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "NotificationPreference": {
+      "title": "NotificationPreference",
+      "description": "Per-user Vehicle Document Expiry notification channel and reminder timing preferences.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "inAppEnabled": { "type": "boolean" },
+        "emailEnabled": { "type": "boolean" },
+        "whatsappEnabled": { "type": "boolean" },
+        "remindFiveDaysBefore": { "type": "boolean" },
+        "remindOnExpiryDate": { "type": "boolean" },
+        "remindOverdue": { "type": "boolean" },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "email",
+        "displayName",
+        "phone",
+        "inAppEnabled",
+        "emailEnabled",
+        "whatsappEnabled",
+        "remindFiveDaysBefore",
+        "remindOnExpiryDate",
+        "remindOverdue",
+        "ownerId",
+        "updatedAt"
+      ]
+    },
+    "ExpiryNotification": {
+      "title": "ExpiryNotification",
+      "description": "Deduplicated Vehicle Document Expiry notification delivery history record.",
+      "type": "object",
+      "properties": {
+        "dedupKey": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 240
+        },
+        "vehicleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "documentType": {
+          "type": "string",
+          "enum": ["Fitness", "Insurance", "PUC", "Road Tax", "Permit"]
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "triggerType": {
+          "type": "string",
+          "enum": ["5_days_before", "on_expiry", "overdue"]
+        },
+        "recipientRole": {
+          "type": "string",
+          "enum": ["admin", "office_staff", "driver"]
+        },
+        "recipientId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "recipientName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "recipientEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "recipientPhone": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "channel": {
+          "type": "string",
+          "enum": ["In-App", "Email", "WhatsApp (Manual)", "WhatsApp (API)"]
+        },
+        "deliveryStatus": {
+          "type": "string",
+          "enum": ["Displayed", "Prepared (Manual)", "Sent", "Acknowledged", "Failed", "Skipped (No Contact)"]
+        },
+        "statusNote": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "dedupKey",
+        "vehicleId",
+        "vehicleNumber",
+        "documentType",
+        "expiryDate",
+        "triggerType",
+        "recipientRole",
+        "recipientId",
+        "recipientName",
+        "recipientEmail",
+        "recipientPhone",
+        "channel",
+        "deliveryStatus",
+        "statusNote",
+        "ownerId",
         "createdAt",
         "updatedAt"
       ]
@@ -1205,6 +1577,10 @@
       "schema": { "$ref": "#/entities/Bill" },
       "description": "Party-wise freight bills generated from trip records."
     },
+    "/lorryReceipts/{lrId}": {
+      "schema": { "$ref": "#/entities/LorryReceipt" },
+      "description": "Standalone Lorry Receipt (LR) consignment notes kept separate from freight bills."
+    },
     "/companySettings/{settingId}": {
       "schema": { "$ref": "#/entities/CompanySettings" },
       "description": "Company bank details and invoice numbering settings."
@@ -1215,7 +1591,15 @@
     },
     "/erpUsers/{userId}": {
       "schema": { "$ref": "#/entities/ErpUser" },
-      "description": "Role-based access profiles for Admin and Employee users."
+      "description": "Role-based access profiles and Admin-assigned vehicle scopes for Admin, Office Staff, and Driver users."
+    },
+    "/notificationPreferences/{prefId}": {
+      "schema": { "$ref": "#/entities/NotificationPreference" },
+      "description": "Per-user notification channel and reminder preferences."
+    },
+    "/expiryNotifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/ExpiryNotification" },
+      "description": "Deduplicated vehicle document expiry notification delivery history."
     },
     "/auditLogs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },
