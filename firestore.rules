@@ -106,8 +106,8 @@ service cloud.firestore {
     function isValidTrip(data) {
       return data.keys().hasAll([
         'lrNumber', 'tripDate', 'vehicleId', 'vehicleNumber', 'partyId',
-        'partyName', 'driverName', 'origin', 'destination', 'material',
-        'weightTons', 'freightAmount', 'advanceReceived', 'dieselExpense',
+        'partyName', 'driverName', 'origin', 'destination',
+        'freightAmount', 'advanceReceived', 'dieselExpense',
         'tollExpense', 'driverAllowance', 'otherExpense', 'balanceAmount',
         'totalExpense', 'tripStatus', 'paymentStatus', 'podReceived',
         'notes', 'ownerId', 'createdAt', 'updatedAt'
@@ -130,8 +130,8 @@ service cloud.firestore {
       data.origin is string && data.origin.size() >= 1 && data.origin.size() <= 100 &&
       data.destination is string && data.destination.size() >= 1 && data.destination.size() <= 100 &&
       (!('containerNo' in data) || (data.containerNo is string && data.containerNo.size() <= 40)) &&
-      data.material is string && data.material.size() <= 100 &&
-      data.weightTons is number && data.weightTons >= 0 && data.weightTons <= 500 &&
+      (!('material' in data) || (data.material is string && data.material.size() <= 100)) &&
+      (!('weightTons' in data) || (data.weightTons is number && data.weightTons >= 0 && data.weightTons <= 500)) &&
       data.freightAmount is number && data.freightAmount >= 0 && data.freightAmount <= 100000000 &&
       data.advanceReceived is number && data.advanceReceived >= 0 && data.advanceReceived <= 100000000 &&
       (!('dieselQuantity' in data) || (data.dieselQuantity is number && data.dieselQuantity >= 0 && data.dieselQuantity <= 100000)) &&
@@ -146,6 +146,48 @@ service cloud.firestore {
       data.paymentStatus is string && data.paymentStatus in ['Unpaid', 'Partial', 'Paid'] &&
       data.podReceived is bool &&
       data.notes is string && data.notes.size() <= 500 &&
+      data.ownerId is string && isValidId(data.ownerId) &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidTripContainerPhoto(data) {
+      return data.keys().hasAll([
+        'tripId', 'tripNumber', 'lrNumber', 'vehicleNumber', 'containerNumber',
+        'photoType', 'photoDataUrl', 'fileName', 'mimeType', 'fileSizeBytes',
+        'width', 'height', 'captureSource', 'uploadedDate', 'uploadedTime',
+        'uploadedAtIso', 'uploadedByUid', 'uploadedByName', 'uploadedByEmail',
+        'uploadedByRole', 'ownerId', 'createdAt', 'updatedAt'
+      ]) && data.keys().hasOnly([
+        'tripId', 'tripNumber', 'lrNumber', 'vehicleNumber', 'containerNumber',
+        'photoType', 'photoDataUrl', 'fileName', 'mimeType', 'fileSizeBytes',
+        'width', 'height', 'captureSource', 'uploadedDate', 'uploadedTime',
+        'uploadedAtIso', 'uploadedByUid', 'uploadedByName', 'uploadedByEmail',
+        'uploadedByRole', 'ownerId', 'createdAt', 'updatedAt'
+      ]) &&
+      data.tripId is string && isValidId(data.tripId) &&
+      data.tripNumber is string && data.tripNumber.size() >= 1 && data.tripNumber.size() <= 50 &&
+      data.lrNumber is string && data.lrNumber.size() >= 1 && data.lrNumber.size() <= 40 &&
+      data.vehicleNumber is string && data.vehicleNumber.size() >= 1 && data.vehicleNumber.size() <= 20 &&
+      data.containerNumber is string && data.containerNumber.size() <= 40 &&
+      data.photoType is string && data.photoType == 'rear_container_doors' &&
+      data.photoDataUrl is string &&
+      data.photoDataUrl.size() >= 30 &&
+      data.photoDataUrl.size() <= 700000 &&
+      data.photoDataUrl.matches('^data:image/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$') &&
+      data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 160 &&
+      data.mimeType is string && data.mimeType in ['image/jpeg', 'image/png', 'image/webp'] &&
+      data.fileSizeBytes is number && data.fileSizeBytes > 0 && data.fileSizeBytes <= 600000 &&
+      data.width is number && data.width > 0 && data.width <= 4000 &&
+      data.height is number && data.height > 0 && data.height <= 4000 &&
+      data.captureSource is string && data.captureSource in ['camera', 'gallery'] &&
+      data.uploadedDate is string && data.uploadedDate.size() >= 8 && data.uploadedDate.size() <= 20 &&
+      data.uploadedTime is string && data.uploadedTime.size() >= 4 && data.uploadedTime.size() <= 20 &&
+      data.uploadedAtIso is string && data.uploadedAtIso.size() >= 10 && data.uploadedAtIso.size() <= 40 &&
+      data.uploadedByUid is string && isValidId(data.uploadedByUid) &&
+      data.uploadedByName is string && data.uploadedByName.size() <= 120 &&
+      data.uploadedByEmail is string && data.uploadedByEmail.size() <= 120 &&
+      data.uploadedByRole is string && data.uploadedByRole in ['admin', 'employee'] &&
       data.ownerId is string && isValidId(data.ownerId) &&
       data.createdAt is timestamp &&
       data.updatedAt is timestamp;
@@ -350,6 +392,7 @@ service cloud.firestore {
         'companyName', 'address', 'gstin', 'pan', 'phone', 'email',
         'bankName', 'accountHolderName', 'accountNumber', 'ifscCode',
         'branchName', 'billPrefix', 'nextBillSeq', 'lrPrefix', 'nextLrSeq', 'logoDataUrl',
+        'billHeaderLeftTruckDataUrl', 'billHeaderRightTruckDataUrl',
         'defaultDieselRate', 'terms', 'ownerId', 'updatedAt'
       ]) &&
       data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 120 &&
@@ -368,6 +411,8 @@ service cloud.firestore {
       (!('lrPrefix' in data) || (data.lrPrefix is string && data.lrPrefix.size() <= 30)) &&
       (!('nextLrSeq' in data) || (data.nextLrSeq is number && data.nextLrSeq >= 1 && data.nextLrSeq <= 1000000)) &&
       (!('logoDataUrl' in data) || (data.logoDataUrl is string && data.logoDataUrl.size() <= 150000 && (data.logoDataUrl == '' || data.logoDataUrl.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$')))) &&
+      (!('billHeaderLeftTruckDataUrl' in data) || (data.billHeaderLeftTruckDataUrl is string && data.billHeaderLeftTruckDataUrl.size() <= 200000 && (data.billHeaderLeftTruckDataUrl == '' || data.billHeaderLeftTruckDataUrl.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$')))) &&
+      (!('billHeaderRightTruckDataUrl' in data) || (data.billHeaderRightTruckDataUrl is string && data.billHeaderRightTruckDataUrl.size() <= 200000 && (data.billHeaderRightTruckDataUrl == '' || data.billHeaderRightTruckDataUrl.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$')))) &&
       (!('defaultDieselRate' in data) || (data.defaultDieselRate is number && data.defaultDieselRate >= 0 && data.defaultDieselRate <= 10000)) &&
       data.terms is string && data.terms.size() <= 500 &&
       data.ownerId is string && isValidId(data.ownerId) &&
@@ -860,6 +905,47 @@ service cloud.firestore {
           !(existing().tripStatus in ['Settled', 'Cancelled'])
         )
       );
+    }
+
+    // -------------------------------------------------------------------------
+    // Trip Container Rear-Door Photo Collection (Strictly 1 Photo Per Trip,
+    // Authenticated Private Storage Only, Admin-Only Delete)
+    // -------------------------------------------------------------------------
+    match /tripContainerPhotos/{tripId} {
+      allow get: if isValidId(tripId) && (
+        isAdmin() || (isVerifiedUser() && existing().ownerId == request.auth.uid)
+      );
+      allow list: if isVerifiedUser() && (
+        isBootstrapAdmin() || existing().ownerId == request.auth.uid
+      );
+      allow create: if isVerifiedUser() &&
+        isValidId(tripId) &&
+        isValidTripContainerPhoto(incoming()) &&
+        incoming().tripId == tripId &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().uploadedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/trips/$(tripId)) &&
+        (
+          isAdmin() ||
+          get(/databases/$(database)/documents/trips/$(tripId)).data.ownerId == request.auth.uid
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(tripId) &&
+        isValidTripContainerPhoto(incoming()) &&
+        incoming().tripId == tripId &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().uploadedByUid == request.auth.uid
+          )
+        );
+      allow delete: if isValidId(tripId) && isAdmin();
     }
 
     // -------------------------------------------------------------------------

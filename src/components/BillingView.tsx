@@ -20,6 +20,10 @@ import {
   CheckCircle2,
   FileText,
   MessageCircle,
+  Truck,
+  Upload,
+  Scissors,
+  LayoutTemplate,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
@@ -27,6 +31,7 @@ import {
   BLUEPRINT_LIMITS,
   DEFAULT_DIESEL_RATE,
   type Bill,
+  type BillFormatType,
   type BillLineItem,
   type BillStatus,
   type CompanySettings,
@@ -54,7 +59,15 @@ import {
   buildBillShareWhatsAppMessage,
   createPdfFileFromJsPdf,
 } from '../utils/whatsappShare';
+import {
+  BILL_HEADER_LEFT_TRUCK_REG,
+  BILL_HEADER_RIGHT_TRUCK_REG,
+  cropDualTruckPhotoInBrowser,
+  isValidBillHeaderTruckDataUrl,
+  prepareSingleTruckPhotoFromFile,
+} from '../utils/billHeaderHelpers';
 import { recordAuditLog } from '../utils/auditLogger';
+import { BillFormatBDocument } from './BillFormatBDocument';
 import { ConfirmDialog } from './ConfirmDialog';
 import { PdfPreviewModal } from './PdfPreviewModal';
 import {
@@ -101,6 +114,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
 
   // Printable Preview Modal
   const [previewBill, setPreviewBill] = useState<Bill | null>(null);
+  const [billFormat, setBillFormat] = useState<BillFormatType>('format-b');
   const [deleteTarget, setDeleteTarget] = useState<Bill | null>(null);
   const [deleting, setDeleting] = useState(false);
   const billPrintRef = useRef<HTMLDivElement | null>(null);
@@ -109,6 +123,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   const [renderedPdfPreview, setRenderedPdfPreview] = useState<RenderedA4PdfResult | null>(null);
   const [generatedBillPdf, setGeneratedBillPdf] = useState<{
     billId: string;
+    format: BillFormatType;
     rendered: RenderedA4PdfResult;
   } | null>(null);
   const [whatsAppBillShare, setWhatsAppBillShare] = useState<{
@@ -117,6 +132,21 @@ export const BillingView: React.FC<BillingViewProps> = ({
     message: string;
     attachment: WhatsAppPdfAttachment;
   } | null>(null);
+
+  // Admin Format B Header — Dual-Truck Real Photo Cropper (GJ12 BV6552 & GJ12 CT4312)
+  const [dualSourceDataUrl, setDualSourceDataUrl] = useState<string>('');
+  const [splitPercent, setSplitPercent] = useState<number>(50);
+  const [topTrimPercent, setTopTrimPercent] = useState<number>(2);
+  const [bottomTrimPercent, setBottomTrimPercent] = useState<number>(2);
+  const [draftLeftTruckDataUrl, setDraftLeftTruckDataUrl] = useState<string>(
+    companySettings?.billHeaderLeftTruckDataUrl || ''
+  );
+  const [draftRightTruckDataUrl, setDraftRightTruckDataUrl] = useState<string>(
+    companySettings?.billHeaderRightTruckDataUrl || ''
+  );
+  const [truckBusy, setTruckBusy] = useState(false);
+  const [truckError, setTruckError] = useState<string | null>(null);
+  const [truckSavedMsg, setTruckSavedMsg] = useState<string | null>(null);
 
   // Company & Bank Settings Form
   const [settingsForm, setSettingsForm] = useState({
@@ -158,6 +188,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
         defaultDieselRate: String(companySettings.defaultDieselRate ?? DEFAULT_DIESEL_RATE),
         terms: companySettings.terms,
       });
+      setDraftLeftTruckDataUrl(companySettings.billHeaderLeftTruckDataUrl || '');
+      setDraftRightTruckDataUrl(companySettings.billHeaderRightTruckDataUrl || '');
     }
   }, [companySettings]);
 
@@ -196,6 +228,18 @@ export const BillingView: React.FC<BillingViewProps> = ({
     });
   };
 
+  const buildBillPdfFileName = (bill: Bill, format: BillFormatType) => {
+    const suffix = format === 'format-b' ? 'FormatB' : 'FormatA';
+    return `Bill-${bill.billNumber}-${suffix}-${bill.partyName}.pdf`;
+  };
+
+  const handleSelectBillFormat = (nextFormat: BillFormatType) => {
+    setBillFormat(nextFormat);
+    setPdfError(null);
+    setRenderedPdfPreview(null);
+    setGeneratedBillPdf(null);
+  };
+
   const handlePreviewBillPdf = async () => {
     if (!previewBill || !billPrintRef.current) return;
     setPdfError(null);
@@ -203,10 +247,10 @@ export const BillingView: React.FC<BillingViewProps> = ({
     try {
       const rendered = await renderElementToA4Pdf(
         billPrintRef.current,
-        `Bill-${previewBill.billNumber}-${previewBill.partyName}.pdf`,
+        buildBillPdfFileName(previewBill, billFormat),
         'portrait'
       );
-      setGeneratedBillPdf({ billId: previewBill.id, rendered });
+      setGeneratedBillPdf({ billId: previewBill.id, format: billFormat, rendered });
       setRenderedPdfPreview(rendered);
     } catch (err) {
       setPdfError(err instanceof Error ? err.message : 'Unable to render A4 PDF preview.');
@@ -222,11 +266,11 @@ export const BillingView: React.FC<BillingViewProps> = ({
     try {
       const rendered = await renderElementToA4Pdf(
         billPrintRef.current,
-        `Bill-${previewBill.billNumber}-${previewBill.partyName}.pdf`,
+        buildBillPdfFileName(previewBill, billFormat),
         'portrait'
       );
       rendered.pdf.save(rendered.fileName);
-      setGeneratedBillPdf({ billId: previewBill.id, rendered });
+      setGeneratedBillPdf({ billId: previewBill.id, format: billFormat, rendered });
     } catch (err) {
       setPdfError(err instanceof Error ? err.message : 'Unable to generate PDF file.');
     } finally {
@@ -235,8 +279,12 @@ export const BillingView: React.FC<BillingViewProps> = ({
   };
 
   const handleShareGeneratedBillPdf = async () => {
-    if (!previewBill) return;
-    if (generatedBillPdf && generatedBillPdf.billId === previewBill.id) {
+    if (!previewBill || previewBill.id === '__sample_preview__') return;
+    if (
+      generatedBillPdf &&
+      generatedBillPdf.billId === previewBill.id &&
+      generatedBillPdf.format === billFormat
+    ) {
       openWhatsAppShareForBillPdf(previewBill, generatedBillPdf.rendered);
       return;
     }
@@ -246,16 +294,98 @@ export const BillingView: React.FC<BillingViewProps> = ({
     try {
       const rendered = await renderElementToA4Pdf(
         billPrintRef.current,
-        `Bill-${previewBill.billNumber}-${previewBill.partyName}.pdf`,
+        buildBillPdfFileName(previewBill, billFormat),
         'portrait'
       );
-      setGeneratedBillPdf({ billId: previewBill.id, rendered });
+      setGeneratedBillPdf({ billId: previewBill.id, format: billFormat, rendered });
       openWhatsAppShareForBillPdf(previewBill, rendered);
     } catch (err) {
       setPdfError(err instanceof Error ? err.message : 'Unable to prepare Bill PDF for WhatsApp.');
     } finally {
       setPdfBusy(false);
     }
+  };
+
+  const handleOpenSampleFormatBBill = () => {
+    setPdfError(null);
+    setRenderedPdfPreview(null);
+    setGeneratedBillPdf(null);
+    setBillFormat('format-b');
+
+    if (bills.length > 0) {
+      const existing = bills[0];
+      setPreviewBill({
+        ...existing,
+        id: '__sample_preview__',
+      });
+      return;
+    }
+
+    const sampleParty = parties[0];
+    const sampleDate = getTodayISO();
+    const sampleLineItems: BillLineItem[] = [
+      {
+        tripId: 'sample_trip_1',
+        srNo: '1',
+        tripDate: sampleDate,
+        lrNumber: 'LR-SAMPLE-01',
+        vehicleNumber: BILL_HEADER_LEFT_TRUCK_REG,
+        containerNo: 'MSCU1234567',
+        origin: 'Mundra Port',
+        destination: 'Morbi',
+        rate: 32000,
+        kharcha: 0,
+        dieselQuantity: 0,
+        dieselAmount: 0,
+        toll: 0,
+        jama: 7000,
+        hisab: 25000,
+        note: '',
+      },
+      {
+        tripId: 'sample_trip_2',
+        srNo: '2',
+        tripDate: sampleDate,
+        lrNumber: 'LR-SAMPLE-02',
+        vehicleNumber: BILL_HEADER_RIGHT_TRUCK_REG,
+        containerNo: 'TCNU7654321',
+        origin: 'Kandla',
+        destination: 'Morbi',
+        rate: 28000,
+        kharcha: 0,
+        dieselQuantity: 0,
+        dieselAmount: 0,
+        toll: 0,
+        jama: 3000,
+        hisab: 25000,
+        note: '',
+      },
+    ];
+
+    setPreviewBill({
+      id: '__sample_preview__',
+      billNumber: `${settingsForm.billPrefix || 'BSE-'}SAMPLE`,
+      billDate: sampleDate,
+      partyId: sampleParty?.id || '',
+      partyName: sampleParty?.partyName || 'Sample Consignor Party',
+      partyGstin: sampleParty?.gstin || '',
+      partyAddress: sampleParty
+        ? [sampleParty.address, sampleParty.city, sampleParty.state].filter(Boolean).join(', ')
+        : '',
+      tripIds: ['sample_trip_1', 'sample_trip_2'],
+      lineItems: sampleLineItems,
+      freightTotal: 60000,
+      expenseTotal: 0,
+      advanceTotal: 10000,
+      netPayable: 50000,
+      amountInWords: rupeesInWords(50000),
+      bankDetails: '',
+      status: 'Draft',
+      notes: 'Non-persistent A4 Format B preview sample (not saved to records).',
+      ownerId: userId,
+      createdAt: null,
+      updatedAt: null,
+    });
   };
 
   const computeSuggestedBillNo = () => {
@@ -556,14 +686,205 @@ export const BillingView: React.FC<BillingViewProps> = ({
     }
   };
 
+  const handleUploadDualTruckPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !permissions.isAdmin) return;
+    setTruckError(null);
+    setTruckSavedMsg(null);
+    setTruckBusy(true);
+    try {
+      const result = await cropDualTruckPhotoInBrowser(file, {
+        splitPercent,
+        topTrimPercent,
+        bottomTrimPercent,
+      });
+      setDualSourceDataUrl(result.sourceDataUrl);
+      setDraftLeftTruckDataUrl(result.leftTruckDataUrl);
+      setDraftRightTruckDataUrl(result.rightTruckDataUrl);
+    } catch (err) {
+      setTruckError(
+        err instanceof Error ? err.message : 'Unable to crop the uploaded dual-truck photograph.'
+      );
+    } finally {
+      setTruckBusy(false);
+    }
+  };
+
+  const handleAdjustDualCrop = async (nextSplit: number, nextTop: number, nextBottom: number) => {
+    setSplitPercent(nextSplit);
+    setTopTrimPercent(nextTop);
+    setBottomTrimPercent(nextBottom);
+    if (!dualSourceDataUrl) return;
+    setTruckError(null);
+    try {
+      const result = await cropDualTruckPhotoInBrowser(dualSourceDataUrl, {
+        splitPercent: nextSplit,
+        topTrimPercent: nextTop,
+        bottomTrimPercent: nextBottom,
+      });
+      setDraftLeftTruckDataUrl(result.leftTruckDataUrl);
+      setDraftRightTruckDataUrl(result.rightTruckDataUrl);
+    } catch (err) {
+      setTruckError(err instanceof Error ? err.message : 'Unable to adjust crop bounds.');
+    }
+  };
+
+  const handleUploadSingleTruckPhoto = async (
+    side: 'left' | 'right',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !permissions.isAdmin) return;
+    setTruckError(null);
+    setTruckSavedMsg(null);
+    setTruckBusy(true);
+    try {
+      const optimized = await prepareSingleTruckPhotoFromFile(file);
+      if (side === 'left') {
+        setDraftLeftTruckDataUrl(optimized);
+      } else {
+        setDraftRightTruckDataUrl(optimized);
+      }
+    } catch (err) {
+      setTruckError(
+        err instanceof Error ? err.message : 'Unable to process the uploaded truck photograph.'
+      );
+    } finally {
+      setTruckBusy(false);
+    }
+  };
+
+  const handleSaveTruckHeaderPhotos = async () => {
+    if (!permissions.isAdmin) return;
+    setTruckError(null);
+    setTruckSavedMsg(null);
+    if (
+      !isValidBillHeaderTruckDataUrl(draftLeftTruckDataUrl) ||
+      !isValidBillHeaderTruckDataUrl(draftRightTruckDataUrl)
+    ) {
+      setTruckError('Truck header images must be valid PNG, JPEG, or WebP photos under 200 KB.');
+      return;
+    }
+
+    setTruckBusy(true);
+    try {
+      const targetId = companySettings?.id || userId;
+      if (companySettings) {
+        await updateDoc(doc(db, 'companySettings', targetId), {
+          billHeaderLeftTruckDataUrl: draftLeftTruckDataUrl,
+          billHeaderRightTruckDataUrl: draftRightTruckDataUrl,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(doc(collection(db, 'companySettings'), targetId), {
+          companyName: clampStr(settingsForm.companyName, 120) || 'BAPASITARAM ENTERPRISE',
+          address: clampStr(settingsForm.address, 300),
+          gstin: clampStr(settingsForm.gstin.toUpperCase(), 20),
+          pan: clampStr(settingsForm.pan.toUpperCase(), 20),
+          phone: clampStr(settingsForm.phone, 40),
+          email: clampStr(settingsForm.email, 120),
+          bankName: clampStr(settingsForm.bankName, 100),
+          accountHolderName: clampStr(settingsForm.accountHolderName, 120),
+          accountNumber: clampStr(settingsForm.accountNumber, 40),
+          ifscCode: clampStr(settingsForm.ifscCode.toUpperCase(), 20),
+          branchName: clampStr(settingsForm.branchName, 100),
+          billPrefix: clampStr(settingsForm.billPrefix, 30) || 'BSE-',
+          nextBillSeq: Math.max(1, Math.floor(clampNum(settingsForm.nextBillSeq || '1', 1, 1000000))),
+          defaultDieselRate: clampNum(
+            settingsForm.defaultDieselRate || String(DEFAULT_DIESEL_RATE),
+            0,
+            BLUEPRINT_LIMITS.DIESEL_RATE_MAX
+          ),
+          terms: clampStr(settingsForm.terms, 500),
+          billHeaderLeftTruckDataUrl: draftLeftTruckDataUrl,
+          billHeaderRightTruckDataUrl: draftRightTruckDataUrl,
+          ownerId: userId,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await recordAuditLog({
+        ownerId: userId,
+        actorRole,
+        action: 'UPDATE',
+        module: 'Company Settings',
+        recordId: targetId,
+        summary: `Updated Format B Bill Header truck photos (${BILL_HEADER_LEFT_TRUCK_REG} & ${BILL_HEADER_RIGHT_TRUCK_REG})`,
+      });
+      setTruckSavedMsg(
+        `Saved real truck photos for ${BILL_HEADER_LEFT_TRUCK_REG} (Left) and ${BILL_HEADER_RIGHT_TRUCK_REG} (Right) in Format B Bill Header.`
+      );
+    } catch (error) {
+      handleFirestoreError(
+        error,
+        companySettings ? OperationType.UPDATE : OperationType.CREATE,
+        `companySettings/${companySettings?.id || userId}`
+      );
+    } finally {
+      setTruckBusy(false);
+    }
+  };
+
+  const handleClearTruckHeaderPhotos = async () => {
+    if (!permissions.isAdmin) return;
+    setTruckError(null);
+    setTruckSavedMsg(null);
+    setTruckBusy(true);
+    try {
+      const targetId = companySettings?.id || userId;
+      setDualSourceDataUrl('');
+      setDraftLeftTruckDataUrl('');
+      setDraftRightTruckDataUrl('');
+      if (companySettings) {
+        await updateDoc(doc(db, 'companySettings', targetId), {
+          billHeaderLeftTruckDataUrl: '',
+          billHeaderRightTruckDataUrl: '',
+          updatedAt: serverTimestamp(),
+        });
+      }
+      setTruckSavedMsg('Removed Format B bill header truck photos.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `companySettings/${companySettings?.id || userId}`);
+    } finally {
+      setTruckBusy(false);
+    }
+  };
+
+  const hasSavedTruckPhotos = Boolean(
+    companySettings?.billHeaderLeftTruckDataUrl && companySettings?.billHeaderRightTruckDataUrl
+  );
+
   return (
     <div className="space-y-5">
-      {/* Notice regarding exact PDF bill sample */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3 no-print">
-        <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-        <div className="text-xs text-amber-900 leading-relaxed">
-          <span className="font-semibold">PDF Bill Format Alignment:</span> Standard freight billing structure (auto bill number, party details, trip/vehicle/container table, rate, expenses, advance, balance, INR in words, bank details, and signature area) is active. Upload or share your supplied PDF bill sample whenever ready so the print layout can be matched 1:1 to your original invoice design.
+      {/* Bill Format A & Format B status banner */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 no-print">
+        <div className="flex items-start gap-3">
+          <Info className="w-4 h-4 text-blue-900 shrink-0 mt-0.5" />
+          <div className="text-xs text-blue-950 leading-relaxed">
+            <span className="font-semibold">Approved Bill Header (Modern Minimal Format B) Active:</span>{' '}
+            Royal Blue, White &amp; Red header with Gujarati devotional header, left truck{' '}
+            <span className="font-mono font-semibold">{BILL_HEADER_LEFT_TRUCK_REG}</span>, center company logo &amp; verified Admin address, and right truck{' '}
+            <span className="font-mono font-semibold">{BILL_HEADER_RIGHT_TRUCK_REG}</span>.{' '}
+            <span className="font-medium">Original Bill Format A</span> remains preserved unchanged.
+            {!hasSavedTruckPhotos && (
+              <span className="block mt-1 text-red-700 font-medium">
+                Upload your actual dual-truck photo in Company &amp; Bank Details to crop and display both real trucks (AI-generated replacements are never used).
+              </span>
+            )}
+          </div>
         </div>
+        {!hasSavedTruckPhotos && permissions.isAdmin && activeTab !== 'settings' && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('settings')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-900 hover:bg-blue-800 rounded-lg cursor-pointer shrink-0 self-start sm:self-center"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload Dual-Truck Photo</span>
+          </button>
+        )}
       </div>
 
       {/* Toolbar */}
@@ -589,16 +910,28 @@ export const BillingView: React.FC<BillingViewProps> = ({
           </button>
         </div>
 
-        {activeTab === 'bills' && permissions.canManageBilling && (
-          <button
-            type="button"
-            onClick={openNewBillDrawer}
-            disabled={parties.length === 0 || trips.length === 0}
-            className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg cursor-pointer disabled:opacity-50"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Generate Party Bill</span>
-          </button>
+        {activeTab === 'bills' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleOpenSampleFormatBBill}
+              className="inline-flex items-center gap-2 px-3.5 py-2 min-h-[40px] bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200 text-xs sm:text-sm font-semibold rounded-lg cursor-pointer"
+            >
+              <LayoutTemplate className="w-4 h-4" />
+              <span>Preview Sample Bill (Format B)</span>
+            </button>
+            {permissions.canManageBilling && (
+              <button
+                type="button"
+                onClick={openNewBillDrawer}
+                disabled={parties.length === 0 || trips.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2 min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Generate Party Bill</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -880,6 +1213,228 @@ export const BillingView: React.FC<BillingViewProps> = ({
         </form>
       )}
 
+      {/* Admin Format B Header Real Dual-Truck Photo Upload & Split-Cropper */}
+      {activeTab === 'settings' && (
+        <div className="bg-white border border-blue-200 rounded-xl p-6 space-y-5 no-print">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 pb-3">
+            <div className="flex items-center gap-2">
+              <Truck className="w-4 h-4 text-blue-900" />
+              <h3 className="text-base font-semibold text-blue-950">
+                Format B Bill Header — Real Dual-Truck Photo Cropper ({BILL_HEADER_LEFT_TRUCK_REG} &amp; {BILL_HEADER_RIGHT_TRUCK_REG})
+              </h3>
+            </div>
+            <span className="text-[11px] font-medium text-blue-900 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-md self-start sm:self-center">
+              Applies to Modern Minimal Format B Only
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Upload your actual photograph containing <span className="font-semibold text-slate-900">BOTH vehicles</span>. The ERP crops the left vehicle separately for{' '}
+            <span className="font-mono font-semibold text-blue-900">{BILL_HEADER_LEFT_TRUCK_REG}</span> and the right vehicle separately for{' '}
+            <span className="font-mono font-semibold text-blue-900">{BILL_HEADER_RIGHT_TRUCK_REG}</span> while preserving exact aspect ratio and registration identity. AI-generated replacement truck images are never used.
+          </p>
+
+          {truckError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+              {truckError}
+            </div>
+          )}
+
+          {truckSavedMsg && (
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{truckSavedMsg}</span>
+            </div>
+          )}
+
+          {permissions.isAdmin ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-900 hover:bg-blue-800 rounded-lg cursor-pointer">
+                  <Scissors className="w-3.5 h-3.5" />
+                  <span>Upload Dual-Truck Photo (Auto-Crop Left &amp; Right)</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleUploadDualTruckPhoto}
+                    disabled={truckBusy}
+                    className="sr-only"
+                  />
+                </label>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Left Only ({BILL_HEADER_LEFT_TRUCK_REG})</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(e) => handleUploadSingleTruckPhoto('left', e)}
+                    disabled={truckBusy}
+                    className="sr-only"
+                  />
+                </label>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Right Only ({BILL_HEADER_RIGHT_TRUCK_REG})</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(e) => handleUploadSingleTruckPhoto('right', e)}
+                    disabled={truckBusy}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+
+              {dualSourceDataUrl && (
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="text-xs font-semibold text-slate-800">
+                    Fine-Tune Dual-Photo Split &amp; Framing (Live Preview)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <div className="flex justify-between text-slate-600 mb-1">
+                        <label htmlFor="dual-split-slider">Center Split Point</label>
+                        <span className="font-mono font-semibold text-slate-900">{splitPercent}%</span>
+                      </div>
+                      <input
+                        id="dual-split-slider"
+                        type="range"
+                        min={35}
+                        max={65}
+                        step={1}
+                        value={splitPercent}
+                        onChange={(e) =>
+                          handleAdjustDualCrop(Number(e.target.value), topTrimPercent, bottomTrimPercent)
+                        }
+                        className="w-full accent-blue-900"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-slate-600 mb-1">
+                        <label htmlFor="dual-top-slider">Top Trim</label>
+                        <span className="font-mono font-semibold text-slate-900">{topTrimPercent}%</span>
+                      </div>
+                      <input
+                        id="dual-top-slider"
+                        type="range"
+                        min={0}
+                        max={25}
+                        step={1}
+                        value={topTrimPercent}
+                        onChange={(e) =>
+                          handleAdjustDualCrop(splitPercent, Number(e.target.value), bottomTrimPercent)
+                        }
+                        className="w-full accent-blue-900"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-slate-600 mb-1">
+                        <label htmlFor="dual-bottom-slider">Bottom Trim</label>
+                        <span className="font-mono font-semibold text-slate-900">{bottomTrimPercent}%</span>
+                      </div>
+                      <input
+                        id="dual-bottom-slider"
+                        type="range"
+                        min={0}
+                        max={25}
+                        step={1}
+                        value={bottomTrimPercent}
+                        onChange={(e) =>
+                          handleAdjustDualCrop(splitPercent, topTrimPercent, Number(e.target.value))
+                        }
+                        className="w-full accent-blue-900"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-3 rounded-xl border border-blue-200 bg-slate-50/70 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-blue-950">
+                      Left Header Vehicle
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-blue-900 text-white font-mono text-[11px] font-bold">
+                      {BILL_HEADER_LEFT_TRUCK_REG}
+                    </span>
+                  </div>
+                  <div className="h-32 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden p-1.5">
+                    {draftLeftTruckDataUrl ? (
+                      <img
+                        src={draftLeftTruckDataUrl}
+                        alt={`Cropped preview ${BILL_HEADER_LEFT_TRUCK_REG}`}
+                        className="max-w-full max-h-full w-auto h-auto object-contain block"
+                      />
+                    ) : (
+                      <span className="text-xs text-slate-400">
+                        No photo uploaded yet for {BILL_HEADER_LEFT_TRUCK_REG}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl border border-blue-200 bg-slate-50/70 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-blue-950">
+                      Right Header Vehicle
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-blue-900 text-white font-mono text-[11px] font-bold">
+                      {BILL_HEADER_RIGHT_TRUCK_REG}
+                    </span>
+                  </div>
+                  <div className="h-32 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden p-1.5">
+                    {draftRightTruckDataUrl ? (
+                      <img
+                        src={draftRightTruckDataUrl}
+                        alt={`Cropped preview ${BILL_HEADER_RIGHT_TRUCK_REG}`}
+                        className="max-w-full max-h-full w-auto h-auto object-contain block"
+                      />
+                    ) : (
+                      <span className="text-xs text-slate-400">
+                        No photo uploaded yet for {BILL_HEADER_RIGHT_TRUCK_REG}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200">
+                <div className="text-[11px] text-slate-500">
+                  Company Logo is shared with Admin Logo Settings ({companySettings?.logoDataUrl ? 'Logo Uploaded' : 'Upload logo in Lorry Receipt → Admin Logo Settings'}).
+                </div>
+                <div className="flex items-center gap-2">
+                  {(draftLeftTruckDataUrl || draftRightTruckDataUrl) && (
+                    <button
+                      type="button"
+                      disabled={truckBusy}
+                      onClick={handleClearTruckHeaderPhotos}
+                      className="px-3.5 py-2 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg cursor-pointer disabled:opacity-50"
+                    >
+                      Remove Truck Photos
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={truckBusy}
+                    onClick={handleSaveTruckHeaderPhotos}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-blue-900 hover:bg-blue-800 rounded-lg cursor-pointer disabled:opacity-50"
+                  >
+                    {truckBusy ? 'Saving...' : 'Save Format B Truck Photos'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+              Only Admin users can upload or modify Format B bill header truck photos.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Bill Creation Drawer */}
       {createOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/50 no-print" role="dialog" aria-modal="true">
@@ -1081,9 +1636,41 @@ export const BillingView: React.FC<BillingViewProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-950/60 overflow-y-auto p-4 sm:p-8 flex justify-center items-start print-modal-root">
           <div className="bg-white w-full max-w-4xl rounded-xl shadow-2xl overflow-hidden print-modal-sheet">
             <div className="px-6 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-slate-50 no-print">
-              <span className="text-xs font-semibold text-slate-700">
-                Bill Preview — {previewBill.billNumber}
-              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-xs font-semibold text-slate-700">
+                  {previewBill.id === '__sample_preview__'
+                    ? `Sample Bill Preview — ${previewBill.billNumber}`
+                    : `Bill Preview — ${previewBill.billNumber}`}
+                </span>
+                <div
+                  className="inline-flex items-center p-0.5 bg-slate-200/80 rounded-lg"
+                  role="group"
+                  aria-label="Select Bill Format"
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleSelectBillFormat('format-a')}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md cursor-pointer ${
+                      billFormat === 'format-a'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Format A (Original)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectBillFormat('format-b')}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md cursor-pointer ${
+                      billFormat === 'format-b'
+                        ? 'bg-blue-900 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Format B (Modern Minimal)
+                  </button>
+                </div>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -1103,17 +1690,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   <Download className="w-3.5 h-3.5" />
                   <span>{pdfBusy ? 'Generating PDF...' : 'Download PDF'}</span>
                 </button>
-                {generatedBillPdf?.billId === previewBill.id && (
-                  <button
-                    type="button"
-                    disabled={pdfBusy}
-                    onClick={handleShareGeneratedBillPdf}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg cursor-pointer disabled:opacity-60"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>WhatsApp Share</span>
-                  </button>
-                )}
+                {previewBill.id !== '__sample_preview__' &&
+                  generatedBillPdf?.billId === previewBill.id &&
+                  generatedBillPdf?.format === billFormat && (
+                    <button
+                      type="button"
+                      disabled={pdfBusy}
+                      onClick={handleShareGeneratedBillPdf}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg cursor-pointer disabled:opacity-60"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>WhatsApp Share</span>
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={() => triggerPrintPreview()}
@@ -1138,24 +1727,26 @@ export const BillingView: React.FC<BillingViewProps> = ({
               </div>
             </div>
 
-            {generatedBillPdf?.billId === previewBill.id && (
-              <div className="px-6 py-2.5 bg-emerald-50 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900 no-print">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                  <span>
-                    Bill PDF <span className="font-mono font-medium">{generatedBillPdf.rendered.fileName}</span> is ready to share manually via WhatsApp.
-                  </span>
+            {previewBill.id !== '__sample_preview__' &&
+              generatedBillPdf?.billId === previewBill.id &&
+              generatedBillPdf?.format === billFormat && (
+                <div className="px-6 py-2.5 bg-emerald-50 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-900 no-print">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <span>
+                      Bill PDF <span className="font-mono font-medium">{generatedBillPdf.rendered.fileName}</span> is ready to share manually via WhatsApp.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleShareGeneratedBillPdf}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg cursor-pointer"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>WhatsApp Share PDF</span>
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleShareGeneratedBillPdf}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg cursor-pointer"
-                >
-                  <MessageCircle className="w-3.5 h-3.5" />
-                  <span>WhatsApp Share PDF</span>
-                </button>
-              </div>
-            )}
+              )}
 
             {pdfError && (
               <div className="px-6 py-2 bg-red-50 border-b border-red-200 text-xs text-red-700 no-print">
@@ -1163,7 +1754,19 @@ export const BillingView: React.FC<BillingViewProps> = ({
               </div>
             )}
 
-            <div id="freight-bill-a4-content" ref={billPrintRef} className="p-8 space-y-6 text-slate-900 bg-white">
+            <div id="freight-bill-a4-content" ref={billPrintRef} className="text-slate-900 bg-white">
+              {billFormat === 'format-b' ? (
+                <BillFormatBDocument
+                  bill={previewBill}
+                  companySettings={companySettings}
+                  companyNameOverride={settingsForm.companyName}
+                  addressOverride={settingsForm.address}
+                  gstinOverride={settingsForm.gstin}
+                  panOverride={settingsForm.pan}
+                  termsOverride={settingsForm.terms}
+                />
+              ) : (
+                <div className="p-8 space-y-6">
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:justify-between gap-4 border-b-2 border-slate-900 pb-4">
                 <div>
@@ -1310,6 +1913,8 @@ export const BillingView: React.FC<BillingViewProps> = ({
                   </div>
                 </div>
               </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1321,7 +1926,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
         onDownload={() => renderedPdfPreview?.pdf.save(renderedPdfPreview.fileName)}
         onPrint={() => triggerPrintPreview()}
         onWhatsAppShare={
-          previewBill && renderedPdfPreview
+          previewBill && previewBill.id !== '__sample_preview__' && renderedPdfPreview
             ? () => openWhatsAppShareForBillPdf(previewBill, renderedPdfPreview)
             : undefined
         }

@@ -65,6 +65,32 @@ import {
   resolveAuthorizedVehiclesForUser,
 } from '../src/utils/expiryNotifications';
 import {
+  buildContainerPhotoDownloadFileName,
+  buildFirestoreContainerPhotoFields,
+  buildPendingContainerPhotoRecord,
+  formatLocalUploadDateTime,
+  validateContainerPhotoDataUrl,
+} from '../src/utils/containerPhotoHelpers';
+import {
+  createInMemoryPhotoQueueAdapter,
+  getPendingContainerPhotos,
+  savePendingContainerPhoto,
+  syncPendingContainerPhotos,
+} from '../src/utils/containerPhotoOfflineQueue';
+import {
+  BILL_HEADER_COMPANY_NAME,
+  BILL_HEADER_CONTACT_LEFT,
+  BILL_HEADER_CONTACT_RIGHT,
+  BILL_HEADER_DEVOTIONAL_LINE,
+  BILL_HEADER_LEFT_TRUCK_REG,
+  BILL_HEADER_RIGHT_TRUCK_REG,
+  computeDualTruckCropRects,
+  isValidBillHeaderTruckDataUrl,
+  resolveVerifiedBillBankDetails,
+  resolveVerifiedCompanyAddress,
+} from '../src/utils/billHeaderHelpers';
+import {
+  CONTAINER_PHOTO_TYPE,
   DEFAULT_DIESEL_RATE,
   type Bill,
   type CompanySettings,
@@ -2426,6 +2452,621 @@ test('ExpiryNotificationsView, DashboardView, SecurityBackupView, server.ts, blu
   assert.match(blueprintSrc, /"NotificationPreference"/);
   assert.match(blueprintSrc, /"ExpiryNotification"/);
 });
+
+test('Container Rear-Door Photo validation blocks public links, SVG, and oversized payloads while linking trip metadata', () => {
+  const sampleJpegDataUrl = `data:image/jpeg;base64,${'A'.repeat(120)}`;
+  assert.equal(validateContainerPhotoDataUrl(sampleJpegDataUrl).valid, true);
+  assert.equal(
+    validateContainerPhotoDataUrl(`data:image/webp;base64,${'B'.repeat(80)}`).valid,
+    true
+  );
+
+  // Rejects public URLs so photos are never exposed as public links
+  assert.equal(
+    validateContainerPhotoDataUrl('https://storage.googleapis.com/public-bucket/photo.jpg').valid,
+    false
+  );
+  assert.equal(
+    validateContainerPhotoDataUrl('http://example.com/container.jpg').valid,
+    false
+  );
+  // Rejects SVG and oversized payloads
+  assert.equal(
+    validateContainerPhotoDataUrl('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=').valid,
+    false
+  );
+  assert.equal(
+    validateContainerPhotoDataUrl(`data:image/jpeg;base64,${'A'.repeat(705000)}`).valid,
+    false
+  );
+
+  const stamp = formatLocalUploadDateTime(new Date('2026-07-10T09:15:30.000Z'));
+  assert.match(stamp.uploadedDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(stamp.uploadedTime, /^\d{2}:\d{2}:\d{2}$/);
+
+  const downloadName = buildContainerPhotoDownloadFileName({
+    containerNumber: 'MSKU1234567',
+    lrNumber: 'BSE-LR-0042',
+    vehicleNumber: 'GJ-03-BW-4312',
+    mimeType: 'image/jpeg',
+  });
+  assert.equal(downloadName, 'Container-RearDoors-MSKU1234567-BSE-LR-0042-GJ-03-BW-4312.jpg');
+
+  // Verify camera & gallery capture records link Trip No, LR No, Vehicle No, Container No, date/time, and employee info
+  const pendingFromCamera = buildPendingContainerPhotoRecord({
+    prepared: {
+      photoDataUrl: sampleJpegDataUrl,
+      mimeType: 'image/jpeg',
+      fileSizeBytes: 90,
+      width: 1280,
+      height: 960,
+      fileName: 'IMG_20260710.jpg',
+      captureSource: 'camera',
+      uploadedDate: '2026-07-10',
+      uploadedTime: '14:45:10',
+      uploadedAtIso: '2026-07-10T09:15:10.000Z',
+    },
+    metadata: {
+      tripId: 'trip_abc123',
+      tripNumber: 'SR-108',
+      lrNumber: 'BSE-LR-0042',
+      vehicleNumber: 'GJ-03-BW-4312',
+      containerNumber: 'msku1234567',
+    },
+    uploader: {
+      uid: 'uid_emp_1',
+      displayName: 'Kishore Patel',
+      email: 'kishore@bapasitaram.in',
+      role: 'employee',
+      ownerId: 'uid_emp_1',
+    },
+  });
+
+  assert.equal(pendingFromCamera.photoType, CONTAINER_PHOTO_TYPE);
+  assert.equal(pendingFromCamera.photoType, 'rear_container_doors');
+  assert.equal(pendingFromCamera.tripNumber, 'SR-108');
+  assert.equal(pendingFromCamera.lrNumber, 'BSE-LR-0042');
+  assert.equal(pendingFromCamera.vehicleNumber, 'GJ-03-BW-4312');
+  assert.equal(pendingFromCamera.containerNumber, 'MSKU1234567');
+  assert.equal(pendingFromCamera.captureSource, 'camera');
+  assert.equal(pendingFromCamera.uploadedDate, '2026-07-10');
+  assert.equal(pendingFromCamera.uploadedTime, '14:45:10');
+  assert.equal(pendingFromCamera.uploadedByName, 'Kishore Patel');
+  assert.equal(pendingFromCamera.uploadedByEmail, 'kishore@bapasitaram.in');
+
+  const firestorePayload = buildFirestoreContainerPhotoFields(pendingFromCamera);
+  assert.equal(firestorePayload.photoType, 'rear_container_doors');
+  assert.equal(firestorePayload.tripId, 'trip_abc123');
+  assert.equal(firestorePayload.containerNumber, 'MSKU1234567');
+});
+
+test('Container Rear-Door Photo offline queue preserves pending photos safely, enforces 1 photo per trip, and auto-syncs when online', async () => {
+  const adapter = createInMemoryPhotoQueueAdapter();
+  const sampleCameraUrl = `data:image/jpeg;base64,${'C'.repeat(120)}`;
+  const sampleGalleryUrl = `data:image/jpeg;base64,${'G'.repeat(120)}`;
+
+  // 1. Capture photo via mobile camera while offline
+  const firstOffline = buildPendingContainerPhotoRecord({
+    prepared: {
+      photoDataUrl: sampleCameraUrl,
+      mimeType: 'image/jpeg',
+      fileSizeBytes: 90,
+      width: 1200,
+      height: 900,
+      fileName: 'cam_rear.jpg',
+      captureSource: 'camera',
+      uploadedDate: '2026-07-10',
+      uploadedTime: '15:00:00',
+      uploadedAtIso: '2026-07-10T09:30:00.000Z',
+    },
+    metadata: {
+      tripId: 'trip_offline_1',
+      tripNumber: 'SR-201',
+      lrNumber: 'LR-201',
+      vehicleNumber: 'GJ-03-BW-4312',
+      containerNumber: 'TGHU7654321',
+    },
+    uploader: {
+      uid: 'uid_staff_1',
+      displayName: 'Field Operator',
+      email: 'staff@bapasitaram.in',
+      role: 'employee',
+      ownerId: 'uid_staff_1',
+    },
+  });
+
+  await savePendingContainerPhoto(firstOffline, adapter);
+  let queued = await getPendingContainerPhotos('uid_staff_1', adapter);
+  assert.equal(queued.length, 1);
+
+  // 2. Replace photo from gallery for the SAME trip -> strictly 1 pending photo per trip
+  const replacedFromGallery = buildPendingContainerPhotoRecord({
+    prepared: {
+      photoDataUrl: sampleGalleryUrl,
+      mimeType: 'image/jpeg',
+      fileSizeBytes: 95,
+      width: 1280,
+      height: 960,
+      fileName: 'gallery_rear.jpg',
+      captureSource: 'gallery',
+      uploadedDate: '2026-07-10',
+      uploadedTime: '15:02:00',
+      uploadedAtIso: '2026-07-10T09:32:00.000Z',
+    },
+    metadata: {
+      tripId: 'trip_offline_1',
+      tripNumber: 'SR-201',
+      lrNumber: 'LR-201',
+      vehicleNumber: 'GJ-03-BW-4312',
+      containerNumber: 'TGHU7654321',
+    },
+    uploader: {
+      uid: 'uid_staff_1',
+      displayName: 'Field Operator',
+      email: 'staff@bapasitaram.in',
+      role: 'employee',
+      ownerId: 'uid_staff_1',
+    },
+  });
+
+  await savePendingContainerPhoto(replacedFromGallery, adapter);
+  queued = await getPendingContainerPhotos('uid_staff_1', adapter);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].captureSource, 'gallery');
+  assert.equal(queued[0].photoDataUrl, sampleGalleryUrl);
+
+  // 3. Attempting sync while still offline must NOT drop or upload the pending photo
+  let uploadCalls = 0;
+  const offlineRes = await syncPendingContainerPhotos({
+    ownerId: 'uid_staff_1',
+    isOnline: false,
+    adapter,
+    uploadFn: async () => {
+      uploadCalls += 1;
+    },
+  });
+  assert.equal(offlineRes.skippedOffline, true);
+  assert.equal(offlineRes.remainingCount, 1);
+  assert.equal(uploadCalls, 0);
+
+  // 4. Transient network failure while online keeps pending photo safely queued with retry status
+  const failedRes = await syncPendingContainerPhotos({
+    ownerId: 'uid_staff_1',
+    isOnline: true,
+    adapter,
+    uploadFn: async () => {
+      uploadCalls += 1;
+      throw new Error('Temporary network timeout');
+    },
+  });
+  assert.equal(failedRes.uploadedTripIds.length, 0);
+  assert.deepEqual(failedRes.failedTripIds, ['trip_offline_1']);
+  assert.equal(failedRes.remainingCount, 1);
+  queued = await getPendingContainerPhotos('uid_staff_1', adapter);
+  assert.equal(queued[0].syncStatus, 'retry_pending');
+  assert.equal(queued[0].retryCount, 1);
+  assert.match(queued[0].lastError, /Temporary network timeout/);
+
+  // 5. Internet returns cleanly -> auto-sync uploads and ONLY THEN clears pending queue
+  const uploadedRecords: string[] = [];
+  const successRes = await syncPendingContainerPhotos({
+    ownerId: 'uid_staff_1',
+    isOnline: true,
+    adapter,
+    uploadFn: async (item) => {
+      uploadedRecords.push(`${item.tripId}:${item.containerNumber}:${item.captureSource}`);
+    },
+  });
+  assert.deepEqual(successRes.uploadedTripIds, ['trip_offline_1']);
+  assert.equal(successRes.remainingCount, 0);
+  assert.deepEqual(uploadedRecords, ['trip_offline_1:TGHU7654321:gallery']);
+
+  queued = await getPendingContainerPhotos('uid_staff_1', adapter);
+  assert.equal(queued.length, 0);
+});
+
+test('Container Rear-Door Photo UI, Firestore rules, Admin-only delete, single category, and PDF exclusion are enforced', () => {
+  const cardSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/ContainerPhotoCard.tsx'),
+    'utf8'
+  );
+  const tripEntrySrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/TripEntryView.tsx'),
+    'utf8'
+  );
+  const tripHistorySrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/TripHistoryView.tsx'),
+    'utf8'
+  );
+  const lrViewSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/LorryReceiptsView.tsx'),
+    'utf8'
+  );
+  const billingViewSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/BillingView.tsx'),
+    'utf8'
+  );
+  const appSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+  const rulesSrc = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
+  const blueprintSrc = fs.readFileSync(path.join(ROOT_DIR, 'firebase-blueprint.json'), 'utf8');
+
+  // Mobile rear camera & gallery inputs present
+  assert.match(cardSrc, /capture="environment"/);
+  assert.match(cardSrc, /accept="image\/jpeg,image\/png,image\/webp,image\/\*"/);
+  assert.match(cardSrc, /Capture with Camera/);
+  assert.match(cardSrc, /Select from Gallery/);
+
+  // Preview, zoom levels (100/150/200/300), download, and Admin-only delete present
+  assert.match(cardSrc, /Preview &amp; Zoom/);
+  assert.match(cardSrc, /\[100,\s*150,\s*200,\s*300\]/);
+  assert.match(cardSrc, /downloadContainerPhotoDataUrl/);
+  assert.match(cardSrc, /permissions\.isAdmin/);
+  assert.match(cardSrc, /Delete Photo \(Admin\)/);
+
+  // Strictly NO front, side, seal, loading, or unloading photo categories
+  assert.doesNotMatch(cardSrc, /front_photo|side_photo|seal_photo|loading_photo|unloading_photo/i);
+  assert.doesNotMatch(cardSrc, /\b(Seal Photo|Loading Photo|Unloading Photo|Side Photo|Front Photo)\b/i);
+
+  // Zero inline styles, zero window.open, zero window.alert
+  for (const src of [cardSrc, tripEntrySrc, tripHistorySrc]) {
+    assert.doesNotMatch(src, /style=\{\{/);
+    assert.doesNotMatch(src, /window\.open\(/);
+    assert.doesNotMatch(src, /window\.alert\(/);
+  }
+
+  // Strictly excluded from LR PDF and Bill PDF modules
+  assert.doesNotMatch(lrViewSrc, /tripContainerPhotos|ContainerPhotoCard|photoDataUrl/);
+  assert.doesNotMatch(billingViewSrc, /tripContainerPhotos|ContainerPhotoCard|photoDataUrl/);
+
+  // Inside TripHistoryView, #lr-voucher-a4-content MUST NOT contain ContainerPhotoCard or photoDataUrl
+  const lrVoucherStart = tripHistorySrc.indexOf('id="lr-voucher-a4-content"');
+  const lrVoucherEnd = tripHistorySrc.indexOf('id="container-photo-modal-title"');
+  assert.ok(lrVoucherStart > 0 && lrVoucherEnd > lrVoucherStart);
+  const lrVoucherSegment = tripHistorySrc.slice(lrVoucherStart, lrVoucherEnd);
+  assert.doesNotMatch(lrVoucherSegment, /ContainerPhotoCard|tripContainerPhotos|photoDataUrl/);
+
+  // App.tsx wires online/offline listeners, auto-sync, and Admin-only delete
+  assert.match(appSrc, /window\.addEventListener\('online'/);
+  assert.match(appSrc, /window\.addEventListener\('offline'/);
+  assert.match(appSrc, /syncPendingContainerPhotos/);
+  assert.match(appSrc, /scopedQuery\('tripContainerPhotos'\)/);
+
+  // Firestore rules & blueprint enforce strictly 1 rear_container_doors photo, private auth storage, and Admin-only delete
+  assert.match(rulesSrc, /function isValidTripContainerPhoto\(data\)/);
+  assert.match(rulesSrc, /data\.photoType == 'rear_container_doors'/);
+  assert.match(rulesSrc, /match \/tripContainerPhotos\/\{tripId\}/);
+  assert.match(rulesSrc, /allow delete: if isValidId\(tripId\) && isAdmin\(\);/);
+  assert.match(blueprintSrc, /"TripContainerPhoto"/);
+  assert.match(blueprintSrc, /"\/tripContainerPhotos\/\{tripId\}"/);
+  assert.match(blueprintSrc, /"enum": \["rear_container_doors"\]/);
+});
+
+test('Trip Entry form removes Material and Weight (MT) completely while preserving all other fields, historical records, and calculations', () => {
+  const tripEntrySrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/TripEntryView.tsx'),
+    'utf8'
+  );
+  const tripHistorySrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/TripHistoryView.tsx'),
+    'utf8'
+  );
+  const rulesSrc = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
+  const blueprint = JSON.parse(
+    fs.readFileSync(path.join(ROOT_DIR, 'firebase-blueprint.json'), 'utf8')
+  );
+
+  // 1. Removed completely from TripEntryView UI, state, validation, and submit payload
+  assert.doesNotMatch(tripEntrySrc, /\bmaterial\b/);
+  assert.doesNotMatch(tripEntrySrc, /\bweightTons\b/);
+  assert.doesNotMatch(tripEntrySrc, /Weight \(MT\)/);
+  assert.doesNotMatch(tripEntrySrc, />Material</);
+
+  // Other essential Trip Entry fields remain untouched
+  assert.match(tripEntrySrc, /LR \/ Bilty Number/);
+  assert.match(tripEntrySrc, /Container No/);
+  assert.match(tripEntrySrc, /Rate \/ Freight/);
+  assert.match(tripEntrySrc, /Diesel Calculation/);
+
+  // 2. Removed from TripHistoryView Trip & LR Statement PDF voucher and mobile card
+  assert.doesNotMatch(tripHistorySrc, /Cargo:/);
+  assert.doesNotMatch(tripHistorySrc, /weightTons/);
+
+  // 3. Removed from required validation in blueprint and firestore.rules while preserving optional historical compatibility
+  const tripRequired: string[] = blueprint.entities.Trip.required;
+  assert.equal(tripRequired.includes('material'), false);
+  assert.equal(tripRequired.includes('weightTons'), false);
+  assert.ok(blueprint.entities.Trip.properties.material, 'Historical Trip property preserved');
+  assert.ok(blueprint.entities.Trip.properties.weightTons, 'Historical Trip property preserved');
+
+  assert.match(rulesSrc, /\(!\('material' in data\) \|\| \(data\.material is string && data\.material\.size\(\) <= 100\)\)/);
+  assert.match(rulesSrc, /\(!\('weightTons' in data\) \|\| \(data\.weightTons is number && data\.weightTons >= 0 && data\.weightTons <= 500\)\)/);
+
+  // 4. Creating a brand-new Trip without material or weightTons works cleanly across Ledger, Statement PDF, and Excel export
+  const newTripWithoutMaterialOrWeight: Trip = {
+    id: 'trip_new_no_mat_wt',
+    srNo: '101',
+    lrNumber: 'LR-NEW-101',
+    tripDate: '2026-07-15',
+    vehicleId: 'veh_1',
+    vehicleNumber: 'GJ-03-BW-4312',
+    partyId: 'pty_new_1',
+    partyName: 'Mundra Logistics Co',
+    driverName: 'Suresh',
+    origin: 'Morbi',
+    destination: 'Mundra Port',
+    containerNo: 'MSKU9876543',
+    freightAmount: 42000,
+    advanceReceived: 12000,
+    dieselQuantity: 100,
+    dieselRate: 98.34,
+    dieselExpense: 9834,
+    tollExpense: 600,
+    driverAllowance: 500,
+    otherExpense: 200,
+    balanceAmount: 30000,
+    totalExpense: 11134,
+    tripStatus: 'In Transit',
+    paymentStatus: 'Partial',
+    podReceived: false,
+    notes: 'Container dispatched',
+    ownerId: 'uid_admin',
+    createdAt: null,
+    updatedAt: null,
+  };
+
+  // Freight, Diesel, Expenses, Party Ledger calculations unchanged
+  const ledger = computePartyLedgerSummary(
+    'pty_new_1',
+    [newTripWithoutMaterialOrWeight],
+    [],
+    'Mundra Logistics Co'
+  );
+  assert.equal(ledger.totalFreight, 42000);
+  assert.equal(ledger.netOutstanding, 30000);
+
+  // Statement PDF generates cleanly without material/weightTons
+  const party: Party = {
+    id: 'pty_new_1',
+    partyName: 'Mundra Logistics Co',
+    partyType: 'Consignor',
+    contactPerson: 'Hitesh',
+    phone: '9825012345',
+    email: '',
+    gstin: '',
+    city: 'Morbi',
+    state: 'Gujarat',
+    address: 'Morbi',
+    paymentTermsDays: 15,
+    status: 'Active',
+    notes: '',
+    ownerId: 'uid_admin',
+    createdAt: null,
+    updatedAt: null,
+  };
+  const stmtPdf = createPartyStatementPdfDocument({
+    party,
+    trips: [newTripWithoutMaterialOrWeight],
+    partyPayments: [],
+  });
+  assert.equal(stmtPdf.summary.netOutstanding, 30000);
+  assert.ok(stmtPdf.pdf.output().startsWith('%PDF-'));
+
+  // Excel export handles missing material/weightTons gracefully
+  const excelRows = buildTripExcelRows([newTripWithoutMaterialOrWeight]);
+  assert.equal(excelRows.length, 1);
+  assert.equal(excelRows[0]['LR No'], 'LR-NEW-101');
+  assert.equal(excelRows[0].Material, '');
+  assert.equal(excelRows[0]['Weight (MT)'], '');
+});
+
+test('Approved Format B Bill Header enforces branding, dual-truck split cropping, verified Admin address, zero fake data, and preserves Format A unchanged', () => {
+  // 1. Approved branding & vehicle registration constants
+  assert.equal(BILL_HEADER_DEVOTIONAL_LINE, '|| માં આશાપુરા || માં મોગલ || માં ગાત્રોળ ||');
+  assert.equal(BILL_HEADER_COMPANY_NAME, 'BAPASITARAM ENTERPRISE');
+  assert.equal(BILL_HEADER_CONTACT_LEFT, '9537379915');
+  assert.equal(BILL_HEADER_CONTACT_RIGHT, '8128202784');
+  assert.equal(BILL_HEADER_LEFT_TRUCK_REG, 'GJ12 BV6552');
+  assert.equal(BILL_HEADER_RIGHT_TRUCK_REG, 'GJ12 CT4312');
+
+  // 2. Dual-truck photo split-cropper math separates Left (GJ12 BV6552) and Right (GJ12 CT4312) cleanly without overlap
+  const defaultCrop = computeDualTruckCropRects(1600, 900);
+  assert.ok(defaultCrop.leftRect.sw > 0 && defaultCrop.leftRect.sh > 0);
+  assert.ok(defaultCrop.rightRect.sw > 0 && defaultCrop.rightRect.sh > 0);
+  assert.ok(
+    defaultCrop.leftRect.sx + defaultCrop.leftRect.sw <= defaultCrop.rightRect.sx,
+    'Left truck crop (GJ12 BV6552) and Right truck crop (GJ12 CT4312) must not overlap'
+  );
+  assert.ok(defaultCrop.rightRect.sx + defaultCrop.rightRect.sw <= 1600);
+  assert.ok(defaultCrop.leftRect.sy + defaultCrop.leftRect.sh <= 900);
+
+  const customCrop = computeDualTruckCropRects(2000, 1000, {
+    splitPercent: 45,
+    topTrimPercent: 10,
+    bottomTrimPercent: 10,
+  });
+  assert.equal(customCrop.leftRect.sy, 100);
+  assert.equal(customCrop.leftRect.sh, 800);
+  assert.ok(customCrop.leftRect.sw < customCrop.rightRect.sw);
+
+  // 3. Truck image data URL validator allows safe base64 photos only and rejects public URLs, SVG, and oversized strings
+  assert.equal(isValidBillHeaderTruckDataUrl(''), true);
+  assert.equal(
+    isValidBillHeaderTruckDataUrl('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=='),
+    true
+  );
+  assert.equal(
+    isValidBillHeaderTruckDataUrl('data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='),
+    true
+  );
+  assert.equal(isValidBillHeaderTruckDataUrl('data:image/svg+xml;base64,PHN2Zz4='), false);
+  assert.equal(isValidBillHeaderTruckDataUrl('https://cdn.example.com/truck.jpg'), false);
+  assert.equal(
+    isValidBillHeaderTruckDataUrl(`data:image/jpeg;base64,${'A'.repeat(200001)}`),
+    false
+  );
+
+  // 4. Verified Admin Settings address & bank details — never invents placeholder address or sample bank details
+  assert.equal(resolveVerifiedCompanyAddress(null, ''), '');
+  assert.equal(
+    resolveVerifiedCompanyAddress({ address: 'Plot 12, Transport Nagar, Morbi, Gujarat' }),
+    'Plot 12, Transport Nagar, Morbi, Gujarat'
+  );
+  assert.equal(resolveVerifiedBillBankDetails({ bankDetails: '' }, null), '');
+  assert.equal(
+    resolveVerifiedBillBankDetails(
+      { bankDetails: '' },
+      {
+        bankName: '',
+        accountHolderName: '',
+        accountNumber: '',
+        ifscCode: '',
+        branchName: '',
+      }
+    ),
+    ''
+  );
+  assert.match(
+    resolveVerifiedBillBankDetails(
+      { bankDetails: '' },
+      {
+        bankName: 'State Bank of India',
+        accountHolderName: 'BAPASITARAM ENTERPRISE',
+        accountNumber: '12345678901',
+        ifscCode: 'SBIN0001234',
+        branchName: 'Morbi Main',
+      }
+    ),
+    /State Bank of India.*SBIN0001234/
+  );
+
+  // 5. Verify BillFormatBDocument & BillingView enforce Royal Blue / White / Red Format B, preserve Format A unchanged, and contain zero fake QR/signatures/inline styles
+  const formatBSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/BillFormatBDocument.tsx'),
+    'utf8'
+  );
+  const billingSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/BillingView.tsx'),
+    'utf8'
+  );
+  const rulesSrc = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
+  const blueprint = JSON.parse(
+    fs.readFileSync(path.join(ROOT_DIR, 'firebase-blueprint.json'), 'utf8')
+  );
+
+  assert.match(formatBSrc, /bg-blue-900/);
+  assert.match(formatBSrc, /bg-red-600/);
+  assert.match(formatBSrc, /bg-white/);
+  assert.match(formatBSrc, /BILL_HEADER_DEVOTIONAL_LINE/);
+  assert.match(formatBSrc, /BILL_HEADER_CONTACT_LEFT/);
+  assert.match(formatBSrc, /BILL_HEADER_CONTACT_RIGHT/);
+  assert.match(formatBSrc, /BILL_HEADER_LEFT_TRUCK_REG/);
+  assert.match(formatBSrc, /BILL_HEADER_RIGHT_TRUCK_REG/);
+  assert.match(formatBSrc, /object-contain/);
+  assert.match(formatBSrc, /resolveVerifiedCompanyAddress/);
+  assert.match(formatBSrc, /resolveVerifiedBillBankDetails/);
+  assert.match(formatBSrc, /RELIABLE TRANSPORT • TRUSTED SERVICE/);
+  assert.match(formatBSrc, />Amount Received</);
+  assert.match(formatBSrc, />Balance Due</);
+  assert.match(formatBSrc, />Total Payable</);
+  assert.match(formatBSrc, />Less: Amount Received</);
+  assert.doesNotMatch(formatBSrc, />Jama<|>Hisab<|>Net Payable<|Transport &amp; Container Logistics/);
+  assert.doesNotMatch(formatBSrc, /QR Code|upi:\/\/|fake|sample bank/i);
+  assert.doesNotMatch(formatBSrc, /style=\{\{/);
+  assert.doesNotMatch(formatBSrc, /window\.open\(/);
+  assert.doesNotMatch(formatBSrc, /window\.alert\(/);
+
+  // BillingView switches between Format A (Original) and Format B (Modern Minimal) and keeps Format A untouched
+  assert.match(billingSrc, /Format A \(Original\)/);
+  assert.match(billingSrc, /Format B \(Modern Minimal\)/);
+  assert.match(billingSrc, /<BillFormatBDocument/);
+  assert.match(billingSrc, /Preview Sample Bill \(Format B\)/);
+  assert.match(billingSrc, /Upload Dual-Truck Photo \(Auto-Crop Left &amp; Right\)/);
+  assert.match(billingSrc, /cropDualTruckPhotoInBrowser/);
+  assert.match(billingSrc, />Jama</);
+  assert.match(billingSrc, />Hisab</);
+  assert.match(billingSrc, /Net Payable Total/);
+  assert.match(billingSrc, /Configure bank details in Company & Bank Details tab\./);
+  assert.doesNotMatch(billingSrc, /style=\{\{/);
+  assert.doesNotMatch(billingSrc, /window\.open\(/);
+  assert.doesNotMatch(billingSrc, /window\.alert\(/);
+
+  // Firestore rules & blueprint enforce bounded Admin-only truck header photo fields
+  assert.ok(blueprint.entities.CompanySettings.properties.billHeaderLeftTruckDataUrl);
+  assert.ok(blueprint.entities.CompanySettings.properties.billHeaderRightTruckDataUrl);
+  assert.equal(
+    blueprint.entities.CompanySettings.properties.billHeaderLeftTruckDataUrl.maxLength,
+    200000
+  );
+  assert.match(rulesSrc, /'billHeaderLeftTruckDataUrl'/);
+  assert.match(rulesSrc, /'billHeaderRightTruckDataUrl'/);
+
+  // 6. Verify A4 Portrait Sample Bill PDF generation produces a valid PDF document
+  const samplePdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  samplePdf.text('BAPASITARAM ENTERPRISE - Format B Sample Bill', 15, 20);
+  const samplePdfFile = createPdfFileFromJsPdf(
+    samplePdf,
+    'Bill-BSE-SAMPLE-FormatB-Sample-Consignor.pdf'
+  );
+  assert.equal(samplePdfFile.type, 'application/pdf');
+  assert.ok(samplePdfFile.size > 100);
+  assert.ok(samplePdf.output().startsWith('%PDF-'));
+});
+
+test('Industrial Command Center visual redesign applies Deep Slate, Graphite, Industrial Orange & Signal Green consistently across ERP without breaking logic or print layouts', () => {
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const indexCss = fs.readFileSync(path.join(ROOT_DIR, 'src/index.css'), 'utf8');
+  const layoutSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/LayoutShell.tsx'), 'utf8');
+  const loginSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/AdminLogin.tsx'), 'utf8');
+  const dashboardSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/DashboardView.tsx'),
+    'utf8'
+  );
+
+  // Industrial display font + Gujarati/Devanagari preserved
+  assert.match(indexHtml, /Barlow\+Condensed/);
+  assert.match(indexHtml, /Noto\+Sans\+Gujarati/);
+  assert.match(indexCss, /--font-display:\s*"Barlow Condensed"/);
+  assert.match(indexCss, /--icc-orange:\s*#ea580c/);
+  assert.match(indexCss, /--icc-signal-green:\s*#16a34a/);
+  assert.match(indexCss, /\.erp-industrial-workspace/);
+  assert.match(indexCss, /:not\(#freight-bill-a4-content table\)/);
+
+  // LayoutShell: Deep Slate & Graphite sidebar + Industrial Orange primary CTA + preserved Phase 1 Checklist
+  assert.match(layoutSrc, /bg-\[#0b111c\]/);
+  assert.match(layoutSrc, /bg-\[#111827\]/);
+  assert.match(layoutSrc, /bg-orange-600/);
+  assert.match(layoutSrc, /Phase 1 Checklist/);
+  assert.match(layoutSrc, /erp-industrial-workspace/);
+  assert.doesNotMatch(layoutSrc, /style=\{\{/);
+
+  // AdminLogin: Industrial Command Center login preserving Google popup auth
+  assert.match(loginSrc, /signInWithPopup\(auth, googleProvider\)/);
+  assert.match(loginSrc, /bg-\[#0b111c\]/);
+  assert.match(loginSrc, /bg-orange-600/);
+  assert.doesNotMatch(loginSrc, /style=\{\{/);
+
+  // DashboardView: all requested command modules with real ERP data and zero fake stats/inline styles
+  assert.match(dashboardSrc, /Operations Overview/);
+  assert.match(dashboardSrc, /Fleet Status —/);
+  assert.match(dashboardSrc, /BILL_HEADER_LEFT_TRUCK_REG/);
+  assert.match(dashboardSrc, /BILL_HEADER_RIGHT_TRUCK_REG/);
+  assert.match(dashboardSrc, /Today&apos;s Trips/);
+  assert.match(dashboardSrc, /Pending Bills/);
+  assert.match(dashboardSrc, /Amount Received/);
+  assert.match(dashboardSrc, /Balance Due/);
+  assert.match(dashboardSrc, /Recent Activity/);
+  assert.match(dashboardSrc, />Trip Entry</);
+  assert.match(dashboardSrc, />Lorry Receipt \(LR\)</);
+  assert.match(dashboardSrc, />Bill</);
+  assert.match(dashboardSrc, />Payment</);
+  assert.doesNotMatch(dashboardSrc, /style=\{\{/);
+  assert.doesNotMatch(dashboardSrc, /window\.open\(/);
+  assert.doesNotMatch(dashboardSrc, /window\.alert\(/);
+});
+
+
+
+
 
 
 

@@ -38,79 +38,85 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ authError, onClearError 
   const displayError = localError || authError;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
-      {/* Left Split: Fleet Terminal Visual */}
-      <div className="relative lg:w-1/2 xl:w-[54%] min-h-[260px] sm:min-h-[320px] lg:min-h-screen bg-slate-900 overflow-hidden flex flex-col justify-between p-6 sm:p-10 lg:p-14">
+    <div className="min-h-screen bg-[#0b111c] flex flex-col lg:flex-row">
+      {/* Left Split: Industrial Fleet Terminal Visual */}
+      <div className="relative lg:w-1/2 xl:w-[55%] min-h-[260px] sm:min-h-[340px] lg:min-h-screen bg-[#0b111c] overflow-hidden flex flex-col justify-between p-6 sm:p-10 lg:p-14 border-b lg:border-b-0 lg:border-r border-slate-800">
         {!imgFailed ? (
           <img
             src="/src/assets/images/logistics_fleet_login_1794931974389.jpg"
             alt="BAPASITARAM ENTERPRISE commercial freight terminal"
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
-            className="absolute inset-0 w-full h-full object-cover object-center"
+            className="absolute inset-0 w-full h-full object-cover object-center opacity-55"
           />
         ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 flex items-center justify-center">
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-[#141c28] to-[#0b111c] flex items-center justify-center">
             <Truck className="w-24 h-24 text-slate-700" />
           </div>
         )}
         <div
-          className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/55 to-slate-950/40"
+          className="absolute inset-0 bg-gradient-to-t from-[#0b111c] via-[#0b111c]/75 to-[#0b111c]/45"
           aria-hidden="true"
         />
 
-        <div className="relative z-10 flex items-center gap-3 text-white">
-          <div className="w-10 h-10 rounded-lg bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center shrink-0">
+        <div className="relative z-10 flex items-center gap-3.5 text-white">
+          <div className="w-11 h-11 rounded-md bg-orange-600 border border-orange-400/40 flex items-center justify-center shrink-0">
             <Truck className="w-5 h-5 text-white" />
           </div>
-          <span className="font-display text-lg font-semibold tracking-tight whitespace-nowrap">
-            BAPASITARAM ENTERPRISE
-          </span>
+          <div>
+            <div className="font-display text-2xl font-bold tracking-wider text-white uppercase leading-none whitespace-nowrap">
+              BAPASITARAM ENTERPRISE
+            </div>
+            <div className="text-[11px] text-slate-300 mt-1 tracking-wide">
+              Industrial Logistics Command Center
+            </div>
+          </div>
         </div>
 
         <div className="relative z-10 max-w-xl mt-10 lg:mt-0">
-          <p className="text-xs font-medium tracking-wide text-slate-300">
-            Fleet Dispatch · Lorry Receipt Ledger · INR Accounting
+          <div className="h-1 w-14 bg-orange-500 mb-4" aria-hidden="true" />
+          <p className="text-xs font-mono font-medium tracking-wide text-orange-400">
+            GJ12 BV6552 · GJ12 CT4312 · Fleet &amp; Freight Control
           </p>
-          <h1 className="mt-2 font-display text-2xl sm:text-4xl font-semibold text-white tracking-tight leading-tight text-balance">
-            Transport Operations &amp; Fleet Management System
+          <h1 className="mt-2 font-display text-3xl sm:text-5xl font-bold text-white tracking-wide uppercase leading-[1.05] text-balance">
+            Transport Operations &amp; Fleet Command ERP
           </h1>
-          <p className="mt-3 text-sm sm:text-base text-slate-200 leading-relaxed max-w-lg">
-            Centralized dispatch control for vehicle compliance, party accounts, trip expenses, and freight settlement across India.
+          <p className="mt-3 text-sm sm:text-base text-slate-300 leading-relaxed max-w-lg">
+            Centralized dispatch control for container trips, lorry receipts, vehicle document compliance, party accounts, and INR freight settlement.
           </p>
 
-          <div className="mt-6 pt-5 border-t border-white/15 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-300">
-            <span>Vehicle Compliance Tracking</span>
-            <span aria-hidden="true">·</span>
-            <span>Party GSTIN &amp; Credit Terms</span>
-            <span aria-hidden="true">·</span>
-            <span>INR Trip Ledger &amp; CSV Export</span>
+          <div className="mt-7 pt-5 border-t border-slate-700/70 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-300">
+            <span className="text-emerald-400 font-medium">Fleet Readiness</span>
+            <span aria-hidden="true" className="text-slate-600">/</span>
+            <span>Lorry Receipts &amp; Billing</span>
+            <span aria-hidden="true" className="text-slate-600">/</span>
+            <span>Party Ledger &amp; INR Reports</span>
           </div>
         </div>
       </div>
 
-      {/* Right Split: Admin Login Form */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 lg:p-16 bg-white">
-        <div className="w-full max-w-md">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-            <Lock className="w-3.5 h-3.5 text-slate-600" />
-            <span>Authorized Administrator Portal</span>
+      {/* Right Split: Command Access Panel */}
+      <div className="flex-1 flex items-center justify-center p-6 sm:p-10 lg:p-16 bg-[#141c28] text-slate-100">
+        <div className="w-full max-w-md bg-[#0f172a] border border-slate-700/80 rounded-lg p-7 sm:p-9">
+          <div className="flex items-center gap-2 text-xs font-mono font-medium text-orange-400">
+            <Lock className="w-3.5 h-3.5" />
+            <span>Authorized Operator Access</span>
           </div>
 
-          <h2 className="mt-3 font-display text-2xl sm:text-3xl font-semibold text-slate-900 tracking-tight">
-            Admin Sign In
+          <h2 className="mt-3 font-display text-3xl font-bold text-white tracking-wide uppercase">
+            Command Sign In
           </h2>
-          <p className="mt-2 text-sm text-slate-600 leading-relaxed">
-            Sign in with your verified Google administrator account to access BAPASITARAM ENTERPRISE fleet, party, and trip ledgers.
+          <p className="mt-2 text-sm text-slate-300 leading-relaxed">
+            Sign in with your verified Google account to access BAPASITARAM ENTERPRISE dispatch, fleet, party ledger, and billing controls.
           </p>
 
           {displayError && (
             <div
               role="alert"
-              className="mt-6 p-4 rounded-lg bg-red-50 border border-red-200 flex items-start gap-3"
+              className="mt-6 p-4 rounded-md bg-red-950/70 border border-red-700/80 flex items-start gap-3"
             >
-              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-              <div className="text-sm text-red-800 leading-relaxed">
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="text-sm text-red-200 leading-relaxed">
                 {displayError}
               </div>
             </div>
@@ -121,7 +127,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ authError, onClearError 
               type="button"
               onClick={handleGoogleSignIn}
               disabled={loading}
-              className="w-full min-h-[48px] px-5 py-3 bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-3 cursor-pointer disabled:opacity-60"
+              className="w-full min-h-[48px] px-5 py-3 bg-orange-600 hover:bg-orange-500 active:bg-orange-700 text-white text-sm font-semibold rounded-md transition-colors flex items-center justify-center gap-3 cursor-pointer disabled:opacity-60"
             >
               <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                 <path
@@ -134,16 +140,16 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ authError, onClearError 
             </button>
           </div>
 
-          <div className="mt-8 pt-6 border-t border-slate-200 space-y-3">
-            <div className="flex items-start gap-3 text-xs text-slate-600 leading-relaxed">
-              <ShieldCheck className="w-4 h-4 text-slate-700 shrink-0 mt-0.5" />
+          <div className="mt-8 pt-6 border-t border-slate-800 space-y-3">
+            <div className="flex items-start gap-3 text-xs text-slate-400 leading-relaxed">
+              <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
               <span>
                 All financial entries are persisted securely in Cloud Firestore with verified identity enforcement and INR audit precision.
               </span>
             </div>
           </div>
 
-          <p className="mt-8 text-xs text-slate-400">
+          <p className="mt-6 text-xs text-slate-500 font-mono">
             BAPASITARAM ENTERPRISE · Transport Management ERP
           </p>
         </div>

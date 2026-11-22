@@ -370,8 +370,6 @@
         "driverName",
         "origin",
         "destination",
-        "material",
-        "weightTons",
         "freightAmount",
         "advanceReceived",
         "dieselExpense",
@@ -893,7 +891,17 @@
         "logoDataUrl": {
           "type": "string",
           "maxLength": 150000,
-          "description": "Admin-uploaded approved company logo encoded as a bounded PNG/JPEG/WebP data URL for LR headers."
+          "description": "Admin-uploaded approved company logo encoded as a bounded PNG/JPEG/WebP data URL for LR and Bill headers."
+        },
+        "billHeaderLeftTruckDataUrl": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Admin-uploaded cropped real photograph of left truck GJ12 BV6552 for Modern Minimal Format B bill header."
+        },
+        "billHeaderRightTruckDataUrl": {
+          "type": "string",
+          "maxLength": 200000,
+          "description": "Admin-uploaded cropped real photograph of right truck GJ12 CT4312 for Modern Minimal Format B bill header."
         },
         "defaultDieselRate": {
           "type": "number",
@@ -1542,6 +1550,134 @@
         "ownerId",
         "createdAt"
       ]
+    },
+    "TripContainerPhoto": {
+      "title": "TripContainerPhoto",
+      "description": "Single secure rear-side shipping container doors photograph linked 1-to-1 with a trip (doc ID = tripId) showing the printed Container Identification Number.",
+      "type": "object",
+      "properties": {
+        "tripId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "tripNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "lrNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "vehicleNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "containerNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "photoType": {
+          "type": "string",
+          "enum": ["rear_container_doors"]
+        },
+        "photoDataUrl": {
+          "type": "string",
+          "minLength": 30,
+          "maxLength": 700000
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "mimeType": {
+          "type": "string",
+          "enum": ["image/jpeg", "image/png", "image/webp"]
+        },
+        "fileSizeBytes": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "captureSource": {
+          "type": "string",
+          "enum": ["camera", "gallery"]
+        },
+        "uploadedDate": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 20
+        },
+        "uploadedTime": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 20
+        },
+        "uploadedAtIso": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 40
+        },
+        "uploadedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uploadedByName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "uploadedByEmail": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "uploadedByRole": {
+          "type": "string",
+          "enum": ["admin", "employee"]
+        },
+        "ownerId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "tripId",
+        "tripNumber",
+        "lrNumber",
+        "vehicleNumber",
+        "containerNumber",
+        "photoType",
+        "photoDataUrl",
+        "fileName",
+        "mimeType",
+        "fileSizeBytes",
+        "width",
+        "height",
+        "captureSource",
+        "uploadedDate",
+        "uploadedTime",
+        "uploadedAtIso",
+        "uploadedByUid",
+        "uploadedByName",
+        "uploadedByEmail",
+        "uploadedByRole",
+        "ownerId",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -1560,6 +1696,10 @@
     "/trips/{tripId}": {
       "schema": { "$ref": "#/entities/Trip" },
       "description": "Transport trip dispatches and INR financial ledgers."
+    },
+    "/tripContainerPhotos/{tripId}": {
+      "schema": { "$ref": "#/entities/TripContainerPhoto" },
+      "description": "Private authenticated rear-side container door photograph linked 1-to-1 per trip (Admin-only deletion)."
     },
     "/drivers/{driverId}": {
       "schema": { "$ref": "#/entities/Driver" },

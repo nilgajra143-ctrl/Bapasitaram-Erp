@@ -464,7 +464,9 @@ export const LorryReceiptsView: React.FC<LorryReceiptsViewProps> = ({
       containerNo: trip.containerNo || prev.containerNo,
       goodsDescription: trip.material || prev.goodsDescription,
       quantityWeight:
-        trip.weightTons > 0 ? `${trip.weightTons} MT` : prev.quantityWeight,
+        typeof trip.weightTons === 'number' && trip.weightTons > 0
+          ? `${trip.weightTons} MT`
+          : prev.quantityWeight,
       freightRate: freight > 0 ? String(freight) : prev.freightRate,
       totalFreightAmount: String(freight),
       advanceAmount: String(adv),

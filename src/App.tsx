@@ -3,12 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
+  doc,
+  getDoc,
   onSnapshot,
   query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
   where,
 } from 'firebase/firestore';
 import {
@@ -36,10 +42,25 @@ import type {
   NotificationPreference,
   Party,
   PartyPayment,
+  PendingContainerPhoto,
   Trip,
+  TripContainerPhoto,
   UserPermissions,
   Vehicle,
 } from './types/erp';
+import {
+  buildFirestoreContainerPhotoFields,
+  buildPendingContainerPhotoRecord,
+  type ContainerPhotoTripMetadata,
+  type PreparedContainerPhoto,
+} from './utils/containerPhotoHelpers';
+import {
+  getPendingContainerPhotos,
+  removePendingContainerPhoto,
+  savePendingContainerPhoto,
+  syncPendingContainerPhotos,
+} from './utils/containerPhotoOfflineQueue';
+import { recordAuditLog } from './utils/auditLogger';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AdminLogin } from './components/AdminLogin';
 import { LayoutShell } from './components/LayoutShell';
@@ -78,6 +99,13 @@ function ErpAppContent() {
   const [parties, setParties] = useState<Party[]>([]);
   const [partyPayments, setPartyPayments] = useState<PartyPayment[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripContainerPhotos, setTripContainerPhotos] = useState<TripContainerPhoto[]>([]);
+  const [pendingContainerPhotos, setPendingContainerPhotos] = useState<PendingContainerPhoto[]>([]);
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [syncingPhotos, setSyncingPhotos] = useState(false);
+  const syncInFlightRef = useRef(false);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [driverPayments, setDriverPayments] = useState<DriverPayment[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>([]);
@@ -132,6 +160,8 @@ function ErpAppContent() {
       setParties([]);
       setPartyPayments([]);
       setTrips([]);
+      setTripContainerPhotos([]);
+      setPendingContainerPhotos([]);
       setDrivers([]);
       setDriverPayments([]);
       setMaintenanceRecords([]);
@@ -154,6 +184,7 @@ function ErpAppContent() {
       parties: false,
       partyPayments: false,
       trips: false,
+      tripContainerPhotos: false,
       drivers: false,
       driverPayments: false,
       maintenanceRecords: false,
@@ -248,6 +279,20 @@ function ErpAppContent() {
         checkReady();
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'trips')
+    );
+
+    const unsubTripContainerPhotos = onSnapshot(
+      scopedQuery('tripContainerPhotos'),
+      (snap) => {
+        setTripContainerPhotos(
+          snap.docs
+            .map((d) => ({ id: d.id, ...(d.data() as Omit<TripContainerPhoto, 'id'>) }))
+            .sort((a, b) => getMillis(b.updatedAt) - getMillis(a.updatedAt))
+        );
+        readyFlags.tripContainerPhotos = true;
+        checkReady();
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'tripContainerPhotos')
     );
 
     const unsubDrivers = onSnapshot(
@@ -482,6 +527,7 @@ function ErpAppContent() {
       unsubParties();
       unsubPartyPayments();
       unsubTrips();
+      unsubTripContainerPhotos();
       unsubDrivers();
       unsubDriverPayments();
       unsubMaintenance();
@@ -565,6 +611,176 @@ function ErpAppContent() {
     };
   }, [isSuperAdmin, erpUsers, user?.email]);
 
+  // 3. Offline Container Photo Queue & Automatic Sync Controller
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const refreshPendingContainerPhotos = useCallback(async () => {
+    if (!user?.uid) {
+      setPendingContainerPhotos([]);
+      return;
+    }
+    const items = await getPendingContainerPhotos(user.uid);
+    setPendingContainerPhotos(items);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    void refreshPendingContainerPhotos();
+  }, [refreshPendingContainerPhotos]);
+
+  const uploadSinglePendingPhotoToFirestore = useCallback(
+    async (pending: PendingContainerPhoto) => {
+      const fields = buildFirestoreContainerPhotoFields(pending);
+      const photoRef = doc(db, 'tripContainerPhotos', pending.tripId);
+      const existingSnap = await getDoc(photoRef);
+
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data();
+        await updateDoc(photoRef, {
+          ...fields,
+          ownerId: existingData.ownerId || fields.ownerId,
+          createdAt: existingData.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(photoRef, {
+          ...fields,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      await recordAuditLog({
+        ownerId: user?.uid || pending.ownerId,
+        actorRole: userPermissions.role,
+        action: existingSnap.exists() ? 'UPDATE' : 'CREATE',
+        module: 'Container Photos',
+        recordId: pending.tripId,
+        summary: `${existingSnap.exists() ? 'Replaced' : 'Uploaded'} rear container doors photo for Trip ${pending.tripNumber} (LR ${pending.lrNumber}, Vehicle ${pending.vehicleNumber}, Container ${pending.containerNumber || 'N/A'}) via ${pending.captureSource}`,
+      });
+    },
+    [user?.uid, userPermissions.role]
+  );
+
+  const handleSyncPendingPhotos = useCallback(async () => {
+    if (!user?.uid || !user.emailVerified || syncInFlightRef.current) return;
+    const onlineNow = typeof navigator !== 'undefined' ? navigator.onLine : isOnline;
+    if (!onlineNow) return;
+
+    syncInFlightRef.current = true;
+    setSyncingPhotos(true);
+    try {
+      await syncPendingContainerPhotos({
+        ownerId: user.uid,
+        isOnline: onlineNow,
+        uploadFn: uploadSinglePendingPhotoToFirestore,
+      });
+      await refreshPendingContainerPhotos();
+    } finally {
+      syncInFlightRef.current = false;
+      setSyncingPhotos(false);
+    }
+  }, [
+    user?.uid,
+    user?.emailVerified,
+    isOnline,
+    uploadSinglePendingPhotoToFirestore,
+    refreshPendingContainerPhotos,
+  ]);
+
+  // Automatically flush offline queue whenever connectivity returns or on sign-in while online
+  useEffect(() => {
+    if (isOnline && user?.uid && user.emailVerified && pendingContainerPhotos.length > 0) {
+      void handleSyncPendingPhotos();
+    }
+  }, [isOnline, user?.uid, user?.emailVerified, pendingContainerPhotos.length, handleSyncPendingPhotos]);
+
+  const handleUploadContainerPhoto = useCallback(
+    async (
+      prepared: PreparedContainerPhoto,
+      metadata: ContainerPhotoTripMetadata
+    ): Promise<{ syncedImmediately: boolean }> => {
+      if (!user?.uid) {
+        throw new Error('Sign in with a verified ERP account to upload container photos.');
+      }
+
+      const pendingRecord = buildPendingContainerPhotoRecord({
+        prepared,
+        metadata,
+        uploader: {
+          uid: user.uid,
+          displayName: user.displayName || user.email || 'ERP Employee',
+          email: user.email || '',
+          role: userPermissions.role,
+          ownerId: user.uid,
+        },
+      });
+
+      // Always save safely to offline queue FIRST before attempting network upload
+      await savePendingContainerPhoto(pendingRecord);
+      await refreshPendingContainerPhotos();
+
+      const onlineNow = typeof navigator !== 'undefined' ? navigator.onLine : isOnline;
+      if (!onlineNow) {
+        return { syncedImmediately: false };
+      }
+
+      const result = await syncPendingContainerPhotos({
+        ownerId: user.uid,
+        isOnline: true,
+        uploadFn: uploadSinglePendingPhotoToFirestore,
+      });
+      await refreshPendingContainerPhotos();
+      return { syncedImmediately: result.uploadedTripIds.includes(metadata.tripId) };
+    },
+    [
+      user,
+      userPermissions.role,
+      isOnline,
+      refreshPendingContainerPhotos,
+      uploadSinglePendingPhotoToFirestore,
+    ]
+  );
+
+  const handleDiscardPendingPhoto = useCallback(
+    async (tripId: string) => {
+      if (!userPermissions.isAdmin) {
+        throw new Error('Only authorized Admin users can delete container photos.');
+      }
+      await removePendingContainerPhoto(tripId);
+      await refreshPendingContainerPhotos();
+    },
+    [userPermissions.isAdmin, refreshPendingContainerPhotos]
+  );
+
+  const handleDeleteContainerPhoto = useCallback(
+    async (photo: TripContainerPhoto) => {
+      if (!user?.uid || !userPermissions.isAdmin) {
+        throw new Error('Only authorized Admin users can delete container photos.');
+      }
+      await deleteDoc(doc(db, 'tripContainerPhotos', photo.tripId));
+      await removePendingContainerPhoto(photo.tripId);
+      await refreshPendingContainerPhotos();
+      await recordAuditLog({
+        ownerId: user.uid,
+        actorRole: userPermissions.role,
+        action: 'DELETE',
+        module: 'Container Photos',
+        recordId: photo.tripId,
+        summary: `Admin deleted rear container doors photo for Trip ${photo.tripNumber} (LR ${photo.lrNumber}, Container ${photo.containerNumber || 'N/A'})`,
+      });
+    },
+    [user?.uid, userPermissions.isAdmin, userPermissions.role, refreshPendingContainerPhotos]
+  );
+
   const handleSignOut = async () => {
     await signOut(auth);
     setActiveSection('dashboard');
@@ -596,12 +812,13 @@ function ErpAppContent() {
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="text-center space-y-2">
-          <div className="font-display text-lg font-semibold text-slate-900">
+      <div className="min-h-screen bg-[#0b111c] flex items-center justify-center p-6">
+        <div className="text-center space-y-2.5">
+          <div className="h-1 w-12 bg-orange-600 mx-auto" aria-hidden="true" />
+          <div className="font-display text-2xl font-bold tracking-wider uppercase text-white">
             BAPASITARAM ENTERPRISE
           </div>
-          <div className="text-xs text-slate-500">Loading ERP session...</div>
+          <div className="font-mono text-xs text-slate-400">Loading ERP session...</div>
         </div>
       </div>
     );
@@ -618,18 +835,19 @@ function ErpAppContent() {
 
   if (userPermissions.isSuspended) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 text-center space-y-3">
-          <h1 className="font-display text-lg font-semibold text-slate-900">
+      <div className="min-h-screen bg-[#0b111c] flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-[#111827] border border-slate-700 rounded-lg p-7 text-center space-y-4">
+          <div className="h-1 w-12 bg-orange-600 mx-auto" aria-hidden="true" />
+          <h1 className="font-display text-2xl font-bold uppercase tracking-wide text-white">
             ERP Access Suspended
           </h1>
-          <p className="text-xs text-slate-600 leading-relaxed">
+          <p className="text-xs text-slate-300 leading-relaxed">
             Your account ({user.email}) is currently suspended by the BAPASITARAM ENTERPRISE administrator.
           </p>
           <button
             type="button"
             onClick={handleSignOut}
-            className="px-4 py-2 text-xs font-medium text-white bg-slate-900 rounded-lg cursor-pointer"
+            className="px-4 py-2 text-xs font-semibold text-white bg-orange-600 hover:bg-orange-500 rounded-md cursor-pointer"
           >
             Sign Out
           </button>
@@ -658,7 +876,9 @@ function ErpAppContent() {
           permissions={userPermissions}
           vehicles={vehicles}
           parties={parties}
+          partyPayments={partyPayments}
           trips={trips}
+          lorryReceipts={lorryReceipts}
           drivers={drivers}
           driverPayments={driverPayments}
           maintenanceRecords={maintenanceRecords}
@@ -815,7 +1035,15 @@ function ErpAppContent() {
           companySettings={companySettings}
           vehicles={vehicles}
           parties={parties}
+          tripContainerPhotos={tripContainerPhotos}
+          pendingContainerPhotos={pendingContainerPhotos}
+          isOnline={isOnline}
+          syncingPhotos={syncingPhotos}
           editingTrip={editingTrip}
+          onUploadContainerPhoto={handleUploadContainerPhoto}
+          onDeleteContainerPhoto={handleDeleteContainerPhoto}
+          onDiscardPendingPhoto={handleDiscardPendingPhoto}
+          onSyncPendingPhotos={handleSyncPendingPhotos}
           onCancelEdit={() => setEditingTrip(null)}
           onSuccessNavigate={handleNavigate}
         />
@@ -826,7 +1054,15 @@ function ErpAppContent() {
           userId={user.uid}
           permissions={userPermissions}
           trips={trips}
+          tripContainerPhotos={tripContainerPhotos}
+          pendingContainerPhotos={pendingContainerPhotos}
+          isOnline={isOnline}
+          syncingPhotos={syncingPhotos}
           loading={dataLoading}
+          onUploadContainerPhoto={handleUploadContainerPhoto}
+          onDeleteContainerPhoto={handleDeleteContainerPhoto}
+          onDiscardPendingPhoto={handleDiscardPendingPhoto}
+          onSyncPendingPhotos={handleSyncPendingPhotos}
           onNewTrip={handleOpenNewTrip}
           onEditTrip={handleEditTrip}
         />

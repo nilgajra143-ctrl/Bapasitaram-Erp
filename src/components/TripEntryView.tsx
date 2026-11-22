@@ -27,7 +27,9 @@ import {
   type NavSection,
   type Party,
   type PartyType,
+  type PendingContainerPhoto,
   type Trip,
+  type TripContainerPhoto,
   type TripStatus,
   type UserPermissions,
   type Vehicle,
@@ -49,7 +51,13 @@ import {
   findDuplicateVehicle,
   resolveEffectiveDieselRate,
 } from '../utils/erpHelpers';
+import {
+  deriveTripNumber,
+  type ContainerPhotoTripMetadata,
+  type PreparedContainerPhoto,
+} from '../utils/containerPhotoHelpers';
 import { recordAuditLog } from '../utils/auditLogger';
+import { ContainerPhotoCard } from './ContainerPhotoCard';
 
 interface TripEntryViewProps {
   userId: string;
@@ -59,7 +67,18 @@ interface TripEntryViewProps {
   companySettings: CompanySettings | null;
   vehicles: Vehicle[];
   parties: Party[];
+  tripContainerPhotos: TripContainerPhoto[];
+  pendingContainerPhotos: PendingContainerPhoto[];
+  isOnline: boolean;
+  syncingPhotos: boolean;
   editingTrip: Trip | null;
+  onUploadContainerPhoto: (
+    prepared: PreparedContainerPhoto,
+    metadata: ContainerPhotoTripMetadata
+  ) => Promise<{ syncedImmediately: boolean }>;
+  onDeleteContainerPhoto: (photo: TripContainerPhoto) => Promise<void>;
+  onDiscardPendingPhoto: (tripId: string) => Promise<void>;
+  onSyncPendingPhotos: () => Promise<void>;
   onCancelEdit: () => void;
   onSuccessNavigate: (section: NavSection) => void;
 }
@@ -74,8 +93,6 @@ interface TripFormState {
   origin: string;
   destination: string;
   containerNo: string;
-  material: string;
-  weightTons: string;
   freightAmount: string;
   advanceReceived: string;
   dieselQuantity: string;
@@ -115,8 +132,6 @@ function createInitialForm(
       origin: editingTrip.origin,
       destination: editingTrip.destination,
       containerNo: editingTrip.containerNo || '',
-      material: editingTrip.material,
-      weightTons: editingTrip.weightTons ? String(editingTrip.weightTons) : '',
       freightAmount: String(editingTrip.freightAmount),
       advanceReceived: String(editingTrip.advanceReceived),
       dieselQuantity: qty > 0 ? String(qty) : '',
@@ -150,8 +165,6 @@ function createInitialForm(
     origin: '',
     destination: '',
     containerNo: '',
-    material: '',
-    weightTons: '',
     freightAmount: '',
     advanceReceived: '',
     dieselQuantity: '',
@@ -175,7 +188,15 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
   companySettings,
   vehicles,
   parties,
+  tripContainerPhotos,
+  pendingContainerPhotos,
+  isOnline,
+  syncingPhotos,
   editingTrip,
+  onUploadContainerPhoto,
+  onDeleteContainerPhoto,
+  onDiscardPendingPhoto,
+  onSyncPendingPhotos,
   onCancelEdit,
   onSuccessNavigate,
 }) => {
@@ -187,6 +208,8 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
   const [form, setForm] = useState<TripFormState>(() =>
     createInitialForm(editingTrip, vehicles, parties, configuredDefaultRate)
   );
+  const [stagedContainerPhoto, setStagedContainerPhoto] =
+    useState<PreparedContainerPhoto | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [savedBanner, setSavedBanner] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -227,10 +250,32 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
     setForm(
       createInitialForm(editingTrip, vehicles, parties, configuredDefaultRate)
     );
+    setStagedContainerPhoto(null);
     setFormError(null);
     setSavedBanner(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingTrip]);
+
+  const currentTripSyncedPhoto = useMemo(
+    () =>
+      editingTrip
+        ? tripContainerPhotos.find((p) => p.tripId === editingTrip.id) || null
+        : null,
+    [editingTrip, tripContainerPhotos]
+  );
+
+  const currentTripPendingPhoto = useMemo(
+    () =>
+      editingTrip
+        ? pendingContainerPhotos.find((p) => p.tripId === editingTrip.id) || null
+        : null,
+    [editingTrip, pendingContainerPhotos]
+  );
+
+  const selectedVehicleNumber = useMemo(() => {
+    const matched = vehicles.find((v) => v.id === form.vehicleId);
+    return matched?.registrationNumber || editingTrip?.vehicleNumber || '';
+  }, [vehicles, form.vehicleId, editingTrip?.vehicleNumber]);
 
   // Sync newly updated Admin default rate into fresh new trips if user hasn't entered litres yet
   useEffect(() => {
@@ -625,8 +670,6 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
       origin,
       destination,
       containerNo: clampStr(form.containerNo.toUpperCase(), BLUEPRINT_LIMITS.CONTAINER_NO_MAX),
-      material: clampStr(form.material, BLUEPRINT_LIMITS.MATERIAL_MAX),
-      weightTons: clampNum(form.weightTons || '0', 0, BLUEPRINT_LIMITS.WEIGHT_MAX),
       freightAmount: liveCalculations.freight,
       advanceReceived: liveCalculations.advance,
       dieselQuantity: liveCalculations.dieselQty,
@@ -689,11 +732,32 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
         }
       }
 
+      if (stagedContainerPhoto && savedTripId) {
+        const tripNumber = clampStr(
+          payload.srNo || payload.lrNumber || savedTripId,
+          BLUEPRINT_LIMITS.TRIP_NUMBER_MAX
+        );
+        await onUploadContainerPhoto(stagedContainerPhoto, {
+          tripId: savedTripId,
+          tripNumber,
+          lrNumber: payload.lrNumber,
+          vehicleNumber: payload.vehicleNumber,
+          containerNumber: payload.containerNo,
+        });
+        setStagedContainerPhoto(null);
+      }
+
       if (editingTrip) {
         onCancelEdit();
         onSuccessNavigate('trip-history');
       } else {
-        setSavedBanner(`Trip ${lrNumber} recorded successfully.`);
+        setSavedBanner(
+          stagedContainerPhoto
+            ? `Trip ${lrNumber} recorded and rear container door photo ${
+                isOnline ? 'uploaded securely' : 'saved safely offline for auto-sync'
+              }.`
+            : `Trip ${lrNumber} recorded successfully.`
+        );
         setForm(createInitialForm(null, vehicles, parties, configuredDefaultRate));
       }
     } catch (error) {
@@ -994,37 +1058,6 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
                 className="w-full px-3 py-2.5 text-sm font-mono uppercase bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900"
               />
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  Material
-                </label>
-                <input
-                  type="text"
-                  maxLength={BLUEPRINT_LIMITS.MATERIAL_MAX}
-                  value={form.material}
-                  onChange={(e) => setForm({ ...form, material: e.target.value })}
-                  placeholder="Tiles / Cargo"
-                  className="w-full px-3 py-2.5 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  Weight (MT)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max={BLUEPRINT_LIMITS.WEIGHT_MAX}
-                  step="0.01"
-                  value={form.weightTons}
-                  onChange={(e) => setForm({ ...form, weightTons: e.target.value })}
-                  placeholder="24.5"
-                  className="w-full px-3 py-2.5 text-sm font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900"
-                />
-              </div>
-            </div>
           </div>
         </section>
 
@@ -1323,6 +1356,56 @@ export const TripEntryView: React.FC<TripEntryViewProps> = ({
                 />
               </div>
             </div>
+          </section>
+
+          {/* Section 3: Single Container Rear-Door Photo (1 Photo Per Trip) */}
+          <section className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-4">
+            <div className="border-b border-slate-100 pb-3">
+              <h2 className="font-display text-base font-semibold text-slate-900">
+                03. Container Rear-Door Photo (Optional · 1 Photo Per Trip)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Rear-side photograph of shipping container doors clearly showing the printed Container Identification Number
+              </p>
+            </div>
+
+            <ContainerPhotoCard
+              tripNumber={
+                editingTrip
+                  ? deriveTripNumber(editingTrip)
+                  : form.srNo.trim() || form.lrNumber.trim() || 'Auto on Save'
+              }
+              lrNumber={form.lrNumber.trim().toUpperCase() || editingTrip?.lrNumber || '—'}
+              vehicleNumber={selectedVehicleNumber || '—'}
+              containerNumber={form.containerNo.trim().toUpperCase()}
+              syncedPhoto={currentTripSyncedPhoto}
+              pendingPhoto={currentTripPendingPhoto}
+              stagedPhoto={!editingTrip ? stagedContainerPhoto : null}
+              permissions={permissions}
+              isOnline={isOnline}
+              syncing={syncingPhotos}
+              canCapture={permissions.canEditTrips}
+              onCapturePrepared={async (prepared) => {
+                if (editingTrip) {
+                  await onUploadContainerPhoto(prepared, {
+                    tripId: editingTrip.id,
+                    tripNumber: clampStr(
+                      form.srNo.trim() || editingTrip.srNo || form.lrNumber.trim() || editingTrip.lrNumber,
+                      BLUEPRINT_LIMITS.TRIP_NUMBER_MAX
+                    ),
+                    lrNumber: form.lrNumber.trim().toUpperCase() || editingTrip.lrNumber,
+                    vehicleNumber: selectedVehicleNumber || editingTrip.vehicleNumber,
+                    containerNumber: form.containerNo.trim().toUpperCase() || editingTrip.containerNo || '',
+                  });
+                } else {
+                  setStagedContainerPhoto(prepared);
+                }
+              }}
+              onClearStaged={!editingTrip ? () => setStagedContainerPhoto(null) : undefined}
+              onDeleteSynced={editingTrip ? onDeleteContainerPhoto : undefined}
+              onDiscardPending={editingTrip ? onDiscardPendingPhoto : undefined}
+              onSyncNow={onSyncPendingPhotos}
+            />
           </section>
 
           {/* Live INR Ledger Summary Box */}

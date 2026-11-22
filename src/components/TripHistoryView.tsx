@@ -12,13 +12,18 @@ import {
   Printer,
   CheckCircle2,
   FileText,
+  Camera,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import {
   PAYMENT_STATUSES,
   TRIP_STATUSES,
   type PaymentStatus,
+  type PendingContainerPhoto,
   type Trip,
+  type TripContainerPhoto,
   type TripStatus,
 } from '../types/erp';
 import {
@@ -34,16 +39,33 @@ import {
   triggerPrintPreview,
   type RenderedA4PdfResult,
 } from '../utils/pdfExport';
+import {
+  deriveTripNumber,
+  type ContainerPhotoTripMetadata,
+  type PreparedContainerPhoto,
+} from '../utils/containerPhotoHelpers';
 import { recordAuditLog } from '../utils/auditLogger';
 import type { UserPermissions } from '../types/erp';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ContainerPhotoCard } from './ContainerPhotoCard';
 import { PdfPreviewModal } from './PdfPreviewModal';
 
 interface TripHistoryViewProps {
   userId: string;
   permissions: UserPermissions;
   trips: Trip[];
+  tripContainerPhotos: TripContainerPhoto[];
+  pendingContainerPhotos: PendingContainerPhoto[];
+  isOnline: boolean;
+  syncingPhotos: boolean;
   loading: boolean;
+  onUploadContainerPhoto: (
+    prepared: PreparedContainerPhoto,
+    metadata: ContainerPhotoTripMetadata
+  ) => Promise<{ syncedImmediately: boolean }>;
+  onDeleteContainerPhoto: (photo: TripContainerPhoto) => Promise<void>;
+  onDiscardPendingPhoto: (tripId: string) => Promise<void>;
+  onSyncPendingPhotos: () => Promise<void>;
   onNewTrip: () => void;
   onEditTrip: (trip: Trip) => void;
 }
@@ -52,7 +74,15 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
   userId,
   permissions,
   trips,
+  tripContainerPhotos,
+  pendingContainerPhotos,
+  isOnline,
+  syncingPhotos,
   loading,
+  onUploadContainerPhoto,
+  onDeleteContainerPhoto,
+  onDiscardPendingPhoto,
+  onSyncPendingPhotos,
   onNewTrip,
   onEditTrip,
 }) => {
@@ -63,6 +93,7 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
   const [dateTo, setDateTo] = useState('');
 
   const [inspectTrip, setInspectTrip] = useState<Trip | null>(null);
+  const [photoModalTrip, setPhotoModalTrip] = useState<Trip | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Trip | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -70,6 +101,22 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [renderedPdfPreview, setRenderedPdfPreview] = useState<RenderedA4PdfResult | null>(null);
+
+  const syncedPhotoByTripId = useMemo(() => {
+    const map = new Map<string, TripContainerPhoto>();
+    tripContainerPhotos.forEach((photo) => {
+      map.set(photo.tripId, photo);
+    });
+    return map;
+  }, [tripContainerPhotos]);
+
+  const pendingPhotoByTripId = useMemo(() => {
+    const map = new Map<string, PendingContainerPhoto>();
+    pendingContainerPhotos.forEach((photo) => {
+      map.set(photo.tripId, photo);
+    });
+    return map;
+  }, [pendingContainerPhotos]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -131,7 +178,7 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
         t.origin.toLowerCase().includes(q) ||
         t.destination.toLowerCase().includes(q) ||
         t.driverName.toLowerCase().includes(q) ||
-        t.material.toLowerCase().includes(q) ||
+        (t.material || '').toLowerCase().includes(q) ||
         t.notes.toLowerCase().includes(q)
       );
     });
@@ -209,6 +256,37 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
 
   return (
     <div className="space-y-5">
+      {/* Offline Container Photo Sync Banner */}
+      {pendingContainerPhotos.length > 0 && (
+        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 no-print">
+          <div className="flex items-start gap-2.5 text-xs text-amber-900">
+            <CloudOff className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                {pendingContainerPhotos.length} Container Rear-Door Photo
+                {pendingContainerPhotos.length > 1 ? 's' : ''} Pending Offline Sync
+              </div>
+              <div className="text-amber-800 mt-0.5">
+                {isOnline
+                  ? 'Internet connection restored. Pending photos remain stored locally until upload completes.'
+                  : 'Currently offline. Pending container photos are safely preserved on this device and will upload automatically once internet returns.'}
+              </div>
+            </div>
+          </div>
+          {isOnline && (
+            <button
+              type="button"
+              disabled={syncingPhotos}
+              onClick={() => onSyncPendingPhotos()}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-amber-950 bg-white border border-amber-300 hover:bg-amber-100 rounded-lg cursor-pointer disabled:opacity-60 shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingPhotos ? 'animate-spin' : ''}`} />
+              <span>{syncingPhotos ? 'Uploading...' : 'Sync Pending Now'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Filter & Export Toolbar */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 no-print">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
@@ -464,6 +542,40 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
                       </td>
                       <td className="py-3 px-3 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1">
+                          {(() => {
+                            const hasSyncedPhoto = syncedPhotoByTripId.has(t.id);
+                            const hasPendingPhoto = pendingPhotoByTripId.has(t.id);
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => setPhotoModalTrip(t)}
+                                aria-label={`Container rear photo for LR ${t.lrNumber}`}
+                                title={
+                                  hasPendingPhoto
+                                    ? 'Container Rear Photo (Pending Offline Sync)'
+                                    : hasSyncedPhoto
+                                    ? 'View Container Rear Photo'
+                                    : 'Upload Container Rear Photo'
+                                }
+                                className={`relative p-2 rounded-lg cursor-pointer ${
+                                  hasPendingPhoto
+                                    ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
+                                    : hasSyncedPhoto
+                                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+                                }`}
+                              >
+                                <Camera className="w-4 h-4" />
+                                {(hasPendingPhoto || hasSyncedPhoto) && (
+                                  <span
+                                    className={`w-2 h-2 rounded-full absolute top-1.5 right-1.5 ${
+                                      hasPendingPhoto ? 'bg-amber-500' : 'bg-emerald-500'
+                                    }`}
+                                  />
+                                )}
+                              </button>
+                            );
+                          })()}
                           <button
                             type="button"
                             onClick={() => setInspectTrip(t)}
@@ -533,8 +645,6 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
 
                   <div className="text-xs text-slate-700">
                     {t.origin} → {t.destination}
-                    {t.material ? ` · ${t.material}` : ''}
-                    {t.weightTons > 0 ? ` (${t.weightTons} MT)` : ''}
                   </div>
 
                   <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
@@ -546,7 +656,33 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
                     </span>
                   </div>
 
-                  <div className="pt-1 flex items-center justify-end gap-2">
+                  <div className="pt-1 flex flex-wrap items-center justify-end gap-2">
+                    {(() => {
+                      const hasSyncedPhoto = syncedPhotoByTripId.has(t.id);
+                      const hasPendingPhoto = pendingPhotoByTripId.has(t.id);
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setPhotoModalTrip(t)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[36px] text-xs font-medium rounded-lg cursor-pointer ${
+                            hasPendingPhoto
+                              ? 'text-amber-900 bg-amber-100 hover:bg-amber-200'
+                              : hasSyncedPhoto
+                              ? 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100'
+                              : 'text-slate-700 bg-slate-100 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>
+                            {hasPendingPhoto
+                              ? 'Photo (Offline)'
+                              : hasSyncedPhoto
+                              ? 'Container Photo'
+                              : 'Add Photo'}
+                          </span>
+                        </button>
+                      );
+                    })()}
                     <button
                       type="button"
                       onClick={() => setInspectTrip(t)}
@@ -637,10 +773,6 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
                   </div>
                   <div className="text-slate-600">
                     Route: {inspectTrip.origin} → {inspectTrip.destination}
-                  </div>
-                  <div className="text-slate-600">
-                    Cargo: {inspectTrip.material || 'General Goods'}{' '}
-                    {inspectTrip.weightTons > 0 ? `(${inspectTrip.weightTons} MT)` : ''}
                   </div>
                 </div>
 
@@ -801,6 +933,67 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
                     </span>
                   </button>
                 )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dedicated Container Rear-Door Photo Modal (Strictly Separate from LR & Bill PDFs) */}
+      {photoModalTrip && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 no-print"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="container-photo-modal-title"
+        >
+          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h2
+                  id="container-photo-modal-title"
+                  className="font-display text-base font-semibold text-slate-900"
+                >
+                  Container Rear-Door Photo — {photoModalTrip.lrNumber}
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Linked to Trip #{deriveTripNumber(photoModalTrip)} · {photoModalTrip.vehicleNumber}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoModalTrip(null)}
+                aria-label="Close container photo modal"
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto">
+              <ContainerPhotoCard
+                tripNumber={deriveTripNumber(photoModalTrip)}
+                lrNumber={photoModalTrip.lrNumber}
+                vehicleNumber={photoModalTrip.vehicleNumber}
+                containerNumber={photoModalTrip.containerNo || ''}
+                syncedPhoto={syncedPhotoByTripId.get(photoModalTrip.id) || null}
+                pendingPhoto={pendingPhotoByTripId.get(photoModalTrip.id) || null}
+                permissions={permissions}
+                isOnline={isOnline}
+                syncing={syncingPhotos}
+                canCapture={permissions.canEditTrips}
+                onCapturePrepared={async (prepared) => {
+                  await onUploadContainerPhoto(prepared, {
+                    tripId: photoModalTrip.id,
+                    tripNumber: deriveTripNumber(photoModalTrip),
+                    lrNumber: photoModalTrip.lrNumber,
+                    vehicleNumber: photoModalTrip.vehicleNumber,
+                    containerNumber: photoModalTrip.containerNo || '',
+                  });
+                }}
+                onDeleteSynced={onDeleteContainerPhoto}
+                onDiscardPending={onDiscardPendingPhoto}
+                onSyncNow={onSyncPendingPhotos}
+              />
             </div>
           </div>
         </div>

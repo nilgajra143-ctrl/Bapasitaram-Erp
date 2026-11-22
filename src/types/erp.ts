@@ -100,6 +100,7 @@ export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
 export const BILL_STATUSES = ['Draft', 'Issued', 'Paid', 'Cancelled'] as const;
 export type BillStatus = (typeof BILL_STATUSES)[number];
+export type BillFormatType = 'format-a' | 'format-b';
 
 export const ERP_USER_ROLES = ['admin', 'employee'] as const;
 export type ErpUserRole = (typeof ERP_USER_ROLES)[number];
@@ -146,6 +147,13 @@ export type NotificationDeliveryStatus = (typeof NOTIFICATION_DELIVERY_STATUSES)
 
 export const ERP_USER_STATUSES = ['Active', 'Suspended'] as const;
 export type ErpUserStatus = (typeof ERP_USER_STATUSES)[number];
+
+export const CONTAINER_PHOTO_TYPE = 'rear_container_doors' as const;
+export type ContainerPhotoType = typeof CONTAINER_PHOTO_TYPE;
+
+export const CONTAINER_PHOTO_CAPTURE_SOURCES = ['camera', 'gallery'] as const;
+export type ContainerPhotoCaptureSource =
+  (typeof CONTAINER_PHOTO_CAPTURE_SOURCES)[number];
 
 export type AuditAction =
   | 'CREATE'
@@ -198,6 +206,13 @@ export const BLUEPRINT_LIMITS = {
   QTY_WEIGHT_MAX: 60,
   SIGNATURE_MAX: 80,
   LOGO_DATA_URL_MAX: 150000,
+  BILL_HEADER_TRUCK_DATA_URL_MAX: 200000,
+  CONTAINER_PHOTO_DATA_URL_MAX: 700000,
+  TRIP_NUMBER_MAX: 50,
+  FILE_NAME_MAX: 160,
+  MIME_TYPE_MAX: 40,
+  UPLOAD_TIME_MAX: 20,
+  UPLOADER_NAME_MAX: 120,
 } as const;
 
 export const DEFAULT_DIESEL_RATE = 98.34;
@@ -254,8 +269,8 @@ export interface Trip {
   origin: string;
   destination: string;
   containerNo?: string;
-  material: string;
-  weightTons: number;
+  material?: string;
+  weightTons?: number;
   freightAmount: number;
   advanceReceived: number;
   dieselQuantity?: number;
@@ -273,6 +288,66 @@ export interface Trip {
   ownerId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
+}
+
+export interface TripContainerPhoto {
+  id: string;
+  tripId: string;
+  tripNumber: string;
+  lrNumber: string;
+  vehicleNumber: string;
+  containerNumber: string;
+  photoType: ContainerPhotoType;
+  photoDataUrl: string;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  captureSource: ContainerPhotoCaptureSource;
+  uploadedDate: string;
+  uploadedTime: string;
+  uploadedAtIso: string;
+  uploadedByUid: string;
+  uploadedByName: string;
+  uploadedByEmail: string;
+  uploadedByRole: ErpUserRole;
+  ownerId: string;
+  createdAt: Timestamp | null;
+  updatedAt: Timestamp | null;
+}
+
+export type PendingContainerPhotoSyncStatus =
+  | 'pending'
+  | 'syncing'
+  | 'retry_pending';
+
+export interface PendingContainerPhoto {
+  tripId: string;
+  tripNumber: string;
+  lrNumber: string;
+  vehicleNumber: string;
+  containerNumber: string;
+  photoType: ContainerPhotoType;
+  photoDataUrl: string;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  captureSource: ContainerPhotoCaptureSource;
+  uploadedDate: string;
+  uploadedTime: string;
+  uploadedAtIso: string;
+  uploadedByUid: string;
+  uploadedByName: string;
+  uploadedByEmail: string;
+  uploadedByRole: ErpUserRole;
+  ownerId: string;
+  queuedAtIso: string;
+  syncStatus: PendingContainerPhotoSyncStatus;
+  retryCount: number;
+  lastError: string;
 }
 
 export interface Driver {
@@ -439,6 +514,8 @@ export interface CompanySettings {
   lrPrefix?: string;
   nextLrSeq?: number;
   logoDataUrl?: string;
+  billHeaderLeftTruckDataUrl?: string;
+  billHeaderRightTruckDataUrl?: string;
   defaultDieselRate?: number;
   terms: string;
   ownerId: string;

@@ -228,7 +228,7 @@ export function reportContainsDevanagari(report: PartyStatementReportData): bool
     report.party.partyName,
     report.party.address,
     report.party.contactPerson,
-    ...report.partyTrips.flatMap((t) => [t.origin, t.destination, t.notes, t.material]),
+    ...report.partyTrips.flatMap((t) => [t.origin, t.destination, t.notes, t.material || '']),
     ...report.payments.flatMap((p) => [p.notes, p.referenceNo]),
   ];
   return sampleTexts.some((txt) => Boolean(txt) && DEVANAGARI_REGEX.test(txt));
