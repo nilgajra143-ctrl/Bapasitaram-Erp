@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { signInWithPopup } from 'firebase/auth';
+import React, { useEffect, useState } from 'react';
+import { getRedirectResult, signInWithPopup, signInWithRedirect } from 'firebase/auth';
 import { ShieldCheck, Truck, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 import { auth, googleProvider } from '../firebase';
+import { isCapacitorNative } from '../utils/capacitorPlatform';
 
 interface AdminLoginProps {
   authError: string | null;
@@ -13,11 +14,23 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ authError, onClearError 
   const [localError, setLocalError] = useState<string | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
 
+  useEffect(() => {
+    if (!isCapacitorNative()) return;
+    void getRedirectResult(auth).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Unable to complete Android Google Sign-In.';
+      setLocalError(msg);
+    });
+  }, []);
+
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setLocalError(null);
     onClearError();
     try {
+      if (isCapacitorNative()) {
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
       await signInWithPopup(auth, googleProvider);
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
@@ -27,6 +40,10 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ authError, onClearError 
         setLocalError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.');
       } else if (code === 'auth/network-request-failed') {
         setLocalError('Network connection interrupted. Please verify internet access and retry.');
+      } else if (isCapacitorNative()) {
+        setLocalError(
+          'Android sign-in requires SHA-1 registration and google-services.json in the existing Firebase project. See ANDROID_CAPACITOR_SETUP.md.'
+        );
       } else {
         setLocalError(err instanceof Error ? err.message : 'Unable to sign in with Google.');
       }

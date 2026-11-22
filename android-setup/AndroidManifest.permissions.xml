@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BAPASITARAM ENTERPRISE — Transport ERP
+  Reference AndroidManifest.xml permissions & feature declarations for Vivo Android devices.
+
+  MANUAL STEP (Local PC / Android Studio):
+  After running `npx cap add android`, merge these permissions into:
+    android/app/src/main/AndroidManifest.xml
+  inside the <manifest> root element (outside <application>).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Core Internet & Network State (required for Firestore sync & offline queue auto-upload) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Container Rear-Door Photo Capture (Mobile Camera + Gallery Selection) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Android 13+ (API 33+) scoped photo picker permission -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Android 12 and below (API <= 32) gallery read fallback -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Optional hardware feature declaration so devices without autofocus still install cleanly -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
+    <!-- Android 11+ (API 30+) package visibility for manual WhatsApp sharing & PDF viewer handoff -->
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="application/pdf" />
+        </intent>
+    </queries>
+</manifest>

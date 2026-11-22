@@ -110,6 +110,36 @@
   text-transform: uppercase;
 }
 
+/* ============================================================================
+   ANDROID CAPACITOR MOBILE SHELL — Safe-Area & Touch Ergonomics (Vivo Phones)
+   Scoped strictly to .android-mobile-shell so PC Web ERP & A4 PDFs stay untouched.
+   ============================================================================ */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.android-mobile-shell {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+}
+
+.android-mobile-shell button,
+.android-mobile-shell a,
+.android-mobile-shell select,
+.android-mobile-shell input {
+  touch-action: manipulation;
+}
+
+.android-mobile-shell .erp-industrial-workspace input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+.android-mobile-shell .erp-industrial-workspace select {
+  min-height: 44px;
+  font-size: 16px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

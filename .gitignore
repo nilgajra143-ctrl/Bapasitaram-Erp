@@ -6,3 +6,23 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Android signing credentials & sensitive keys (NEVER commit to Git)
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+signing.properties
+google-services.json
+android/app/google-services.json
+*firebase-adminsdk*.json
+serviceAccountKey.json
+service-account*.json
+
+# Generated Android Capacitor project & local build outputs
+android/
+dist-apk/
+*.apk
+*.aab
+.gmp_cache/

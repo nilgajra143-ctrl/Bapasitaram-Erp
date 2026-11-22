@@ -64,6 +64,11 @@ import { recordAuditLog } from './utils/auditLogger';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AdminLogin } from './components/AdminLogin';
 import { LayoutShell } from './components/LayoutShell';
+import { MobileAppShell } from './components/MobileAppShell';
+import {
+  applyAndroidStatusBarTheme,
+  shouldUseAndroidMobileShell,
+} from './utils/capacitorPlatform';
 import { DashboardView } from './components/DashboardView';
 import { VehiclesView } from './components/VehiclesView';
 import { ExpiryNotificationsView } from './components/ExpiryNotificationsView';
@@ -94,6 +99,25 @@ function ErpAppContent() {
   const [preselectedPartyId, setPreselectedPartyId] = useState<string | null>(null);
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [checklistCompletedCount, setChecklistCompletedCount] = useState(0);
+  const [useMobileShell, setUseMobileShell] = useState<boolean>(() =>
+    shouldUseAndroidMobileShell()
+  );
+
+  useEffect(() => {
+    applyAndroidStatusBarTheme();
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+    const mq = window.matchMedia('(max-width: 767px)');
+    const syncMode = () => setUseMobileShell(shouldUseAndroidMobileShell());
+    syncMode();
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', syncMode);
+      return () => mq.removeEventListener('change', syncMode);
+    }
+    mq.addListener(syncMode);
+    return () => mq.removeListener(syncMode);
+  }, []);
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
@@ -856,18 +880,8 @@ function ErpAppContent() {
     );
   }
 
-  return (
-    <LayoutShell
-      user={user}
-      isSuperAdmin={isSuperAdmin}
-      permissions={userPermissions}
-      activeSection={activeSection}
-      onNavigate={handleNavigate}
-      onSignOut={handleSignOut}
-      onNewTripClick={handleOpenNewTrip}
-      onOpenChecklist={() => setChecklistOpen(true)}
-      checklistCompletedCount={checklistCompletedCount}
-    >
+  const moduleContent = (
+    <>
       {activeSection === 'dashboard' && (
         <DashboardView
           userId={user.uid}
@@ -1115,6 +1129,50 @@ function ErpAppContent() {
         onNavigate={handleNavigate}
         onProgressChange={setChecklistCompletedCount}
       />
+    </>
+  );
+
+  if (useMobileShell) {
+    return (
+      <MobileAppShell
+        user={user}
+        isSuperAdmin={isSuperAdmin}
+        permissions={userPermissions}
+        activeSection={activeSection}
+        onNavigate={handleNavigate}
+        onSignOut={handleSignOut}
+        onNewTripClick={handleOpenNewTrip}
+        isOnline={isOnline}
+        syncingPhotos={syncingPhotos}
+        pendingContainerPhotos={pendingContainerPhotos}
+        onSyncPendingPhotos={handleSyncPendingPhotos}
+        parties={parties}
+        trips={trips}
+        partyPayments={partyPayments}
+        tripContainerPhotos={tripContainerPhotos}
+        companySettings={companySettings}
+        onUploadContainerPhoto={handleUploadContainerPhoto}
+        onDeleteContainerPhoto={handleDeleteContainerPhoto}
+        onDiscardPendingPhoto={handleDiscardPendingPhoto}
+      >
+        {moduleContent}
+      </MobileAppShell>
+    );
+  }
+
+  return (
+    <LayoutShell
+      user={user}
+      isSuperAdmin={isSuperAdmin}
+      permissions={userPermissions}
+      activeSection={activeSection}
+      onNavigate={handleNavigate}
+      onSignOut={handleSignOut}
+      onNewTripClick={handleOpenNewTrip}
+      onOpenChecklist={() => setChecklistOpen(true)}
+      checklistCompletedCount={checklistCompletedCount}
+    >
+      {moduleContent}
     </LayoutShell>
   );
 }

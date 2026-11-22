@@ -3122,3 +3122,176 @@ test('Accidental deletion protection removes Vehicle Management delete action, d
   assert.match(securitySrc, /Delete Records \(Disabled for Ordinary Users\)/);
   assert.match(securitySrc, /if \(!deleteUserTarget \|\| !isSuperAdmin\) return;/);
 });
+
+test('Capacitor Android APK preparation exposes all 11 Vivo mobile modules, reuses existing Firebase project, adds Android WebView offline persistence fallback, and keeps PC Web ERP unchanged', () => {
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+  const capConfigSrc = fs.readFileSync(path.join(ROOT_DIR, 'capacitor.config.ts'), 'utf8');
+  const manifestTemplateSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'android-setup/AndroidManifest.permissions.xml'),
+    'utf8'
+  );
+  const setupGuideSrc = fs.readFileSync(path.join(ROOT_DIR, 'ANDROID_CAPACITOR_SETUP.md'), 'utf8');
+  const platformSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/utils/capacitorPlatform.ts'),
+    'utf8'
+  );
+  const mobileShellSrc = fs.readFileSync(
+    path.join(ROOT_DIR, 'src/components/MobileAppShell.tsx'),
+    'utf8'
+  );
+  const appSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+  const firebaseSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/firebase.ts'), 'utf8');
+  const indexHtml = fs.readFileSync(path.join(ROOT_DIR, 'index.html'), 'utf8');
+  const indexCss = fs.readFileSync(path.join(ROOT_DIR, 'src/index.css'), 'utf8');
+
+  // 1. Capacitor packages & scripts
+  assert.ok(pkgJson.dependencies['@capacitor/core']);
+  assert.ok(pkgJson.dependencies['@capacitor/cli']);
+  assert.ok(pkgJson.dependencies['@capacitor/android']);
+  assert.ok(pkgJson.scripts['build:mobile']);
+  assert.ok(pkgJson.scripts['cap:add:android']);
+  assert.ok(pkgJson.scripts['cap:sync']);
+  assert.ok(pkgJson.scripts['cap:open:android']);
+
+  // 2. Capacitor config & Android manifest template
+  assert.match(capConfigSrc, /appId:\s*'com\.bapasitaram\.transporterp'/);
+  assert.match(capConfigSrc, /webDir:\s*'dist'/);
+  assert.match(capConfigSrc, /androidScheme:\s*'https'/);
+  assert.match(capConfigSrc, /cleartext:\s*false/);
+  assert.match(manifestTemplateSrc, /android\.permission\.CAMERA/);
+  assert.match(manifestTemplateSrc, /android\.permission\.READ_MEDIA_IMAGES/);
+  assert.match(manifestTemplateSrc, /com\.whatsapp/);
+
+  // 3. Setup guide reuses existing Firebase project and honestly documents manual local APK steps
+  assert.match(setupGuideSrc, /project-bb532c5d-caa8-4900-a11/);
+  assert.match(setupGuideSrc, /ai-studio-914e08fc-768d-4fdb-a892-abe3b764cf48/);
+  assert.match(setupGuideSrc, /google-services\.json/);
+  assert.match(setupGuideSrc, /Android Studio/);
+  assert.match(setupGuideSrc, /Vivo/i);
+
+  // 4. MobileAppShell exposes all 11 required mobile modules & reuses existing modals/cards
+  const requiredMobileModules = [
+    'Dashboard',
+    'Trip Entry',
+    'Trip History',
+    'LR Management',
+    'Bill Management',
+    'Payment Entry',
+    'Party Ledger',
+    'Vehicle Details',
+    'Driver Details',
+    'Vehicle Document Expiry Alerts',
+    'Container Rear Photo Capture',
+  ];
+  for (const modName of requiredMobileModules) {
+    assert.ok(
+      mobileShellSrc.includes(modName),
+      `MobileAppShell must include mobile module "${modName}"`
+    );
+  }
+  assert.match(mobileShellSrc, /<AddPaymentModal/);
+  assert.match(mobileShellSrc, /<ContainerPhotoCard/);
+  assert.match(mobileShellSrc, /registerAndroidBackButtonHandler/);
+  assert.match(mobileShellSrc, /permissions\.canEditTrips/);
+  assert.match(mobileShellSrc, /permissions\.canManageBilling/);
+  assert.doesNotMatch(mobileShellSrc, /style=\{\{/);
+  assert.doesNotMatch(mobileShellSrc, /window\.open\(/);
+  assert.doesNotMatch(mobileShellSrc, /window\.alert\(/);
+
+  // 5. PC Web ERP preserved unchanged alongside conditional MobileAppShell
+  assert.match(appSrc, /<LayoutShell/);
+  assert.match(appSrc, /<MobileAppShell/);
+  assert.match(appSrc, /shouldUseAndroidMobileShell/);
+  assert.match(platformSrc, /isCapacitorAndroid/);
+  assert.match(platformSrc, /registerAndroidBackButtonHandler/);
+
+  // 6. Existing Firebase project/database preserved + Android WebView offline fallback
+  assert.match(firebaseSrc, /firebaseConfig\.firestoreDatabaseId/);
+  assert.match(firebaseSrc, /persistentMultipleTabManager/);
+  assert.match(firebaseSrc, /persistentSingleTabManager/);
+
+  // 7. Safe-area & touch ergonomics scoped cleanly
+  assert.match(indexHtml, /viewport-fit=cover/);
+  assert.match(indexCss, /\.pt-safe/);
+  assert.match(indexCss, /\.pb-safe/);
+  assert.match(indexCss, /\.android-mobile-shell/);
+});
+
+test('GitHub Actions cloud APK workflows separate Debug and Release builds, require zero secrets for initial Vivo Debug testing, harden .gitignore, and merge AndroidManifest permissions idempotently', async () => {
+  const debugWf = fs.readFileSync(
+    path.join(ROOT_DIR, '.github/workflows/android-debug-apk.yml'),
+    'utf8'
+  );
+  const releaseWf = fs.readFileSync(
+    path.join(ROOT_DIR, '.github/workflows/android-release-apk.yml'),
+    'utf8'
+  );
+  const gitignoreSrc = fs.readFileSync(path.join(ROOT_DIR, '.gitignore'), 'utf8');
+  const cloudGuideSrc = fs.readFileSync(path.join(ROOT_DIR, 'GITHUB_ACTIONS_APK_SETUP.md'), 'utf8');
+  const templateManifestXml = fs.readFileSync(
+    path.join(ROOT_DIR, 'android-setup/AndroidManifest.permissions.xml'),
+    'utf8'
+  );
+
+  // 1. Debug workflow: manual dispatch, least privilege, Java 21 + Android 36, ZERO secrets required
+  assert.match(debugWf, /workflow_dispatch:/);
+  assert.match(debugWf, /contents:\s*read/);
+  assert.match(debugWf, /runs-on:\s*ubuntu-latest/);
+  assert.match(debugWf, /java-version:\s*'21'/);
+  assert.match(debugWf, /platforms;android-36/);
+  assert.match(debugWf, /assembleDebug/);
+  assert.match(debugWf, /prepare-android-manifest\.mjs/);
+  assert.match(debugWf, /actions\/upload-artifact@v4/);
+  assert.doesNotMatch(debugWf, /secrets\./);
+
+  // 2. Release workflow: separate manual workflow, defaults to unsigned_dry_run (no signing creds required yet),
+  //    uses GitHub Encrypted Secrets only in signed_with_secrets mode, cleans up temp files always
+  assert.match(releaseWf, /workflow_dispatch:/);
+  assert.match(releaseWf, /contents:\s*read/);
+  assert.match(releaseWf, /default:\s*'unsigned_dry_run'/);
+  assert.match(releaseWf, /signed_with_secrets/);
+  assert.match(releaseWf, /ANDROID_KEYSTORE_B64/);
+  assert.match(releaseWf, /--ks-pass env:ANDROID_KEYSTORE_PASSWORD/);
+  assert.match(releaseWf, /--key-pass env:ANDROID_KEY_PASSWORD/);
+  assert.match(releaseWf, /if:\s*always\(\)/);
+  assert.match(releaseWf, /rm -f "\$RUNNER_TEMP\/release-keystore\.jks"/);
+
+  // 3. .gitignore blocks signing credentials, Firebase Admin keys, google-services.json, and built APKs
+  assert.match(gitignoreSrc, /\*\.jks/);
+  assert.match(gitignoreSrc, /\*\.keystore/);
+  assert.match(gitignoreSrc, /keystore\.properties/);
+  assert.match(gitignoreSrc, /google-services\.json/);
+  assert.match(gitignoreSrc, /\*firebase-adminsdk\*\.json/);
+  assert.match(gitignoreSrc, /serviceAccountKey\.json/);
+  assert.match(gitignoreSrc, /\*\.apk/);
+
+  // 4. Setup guide clearly states no APK has been built yet and keeps existing Firebase project
+  assert.match(cloudGuideSrc, /No `\.apk` file has been created yet/);
+  assert.match(cloudGuideSrc, /project-bb532c5d-caa8-4900-a11/);
+  assert.match(cloudGuideSrc, /ai-studio-914e08fc-768d-4fdb-a892-abe3b764cf48/);
+  assert.match(cloudGuideSrc, /Private/);
+
+  // 5. Manifest merge helper cleanly merges missing permissions/features/queries and is idempotent
+  const manifestHelperUrl = new URL('../android-setup/prepare-android-manifest.mjs', import.meta.url);
+  const { mergeAndroidManifestPermissions } = await import(manifestHelperUrl.href);
+  const sampleBaseManifest = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="@string/app_name" />
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
+`;
+
+  const mergedOnce = mergeAndroidManifestPermissions(sampleBaseManifest, templateManifestXml);
+  assert.match(mergedOnce, /android\.permission\.ACCESS_NETWORK_STATE/);
+  assert.match(mergedOnce, /android\.permission\.CAMERA/);
+  assert.match(mergedOnce, /android\.permission\.READ_MEDIA_IMAGES/);
+  assert.match(mergedOnce, /android\.permission\.READ_EXTERNAL_STORAGE/);
+  assert.match(mergedOnce, /android\.hardware\.camera/);
+  assert.match(mergedOnce, /<package android:name="com\.whatsapp" \/>/);
+  assert.equal((mergedOnce.match(/android\.permission\.INTERNET/g) || []).length, 1);
+
+  const mergedTwice = mergeAndroidManifestPermissions(mergedOnce, templateManifestXml);
+  assert.equal(mergedTwice, mergedOnce);
+});
+
+
