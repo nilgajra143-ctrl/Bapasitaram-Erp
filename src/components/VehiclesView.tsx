@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   collection,
-  deleteDoc,
   doc,
   serverTimestamp,
   setDoc,
@@ -12,7 +11,6 @@ import {
   Search,
   Truck,
   Pencil,
-  Trash2,
   X,
   Phone,
   AlertTriangle,
@@ -45,7 +43,6 @@ import {
 } from '../utils/formatters';
 import { extractReadableFirestoreError, findDuplicateVehicle } from '../utils/erpHelpers';
 import { recordAuditLog } from '../utils/auditLogger';
-import { ConfirmDialog } from './ConfirmDialog';
 
 interface VehiclesViewProps {
   userId: string;
@@ -111,8 +108,6 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [inspectVehicle, setInspectVehicle] = useState<Vehicle | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Vehicle | null>(null);
-  const [deleting, setDeleting] = useState(false);
 
   const financialsByVehicle = useMemo(() => {
     const map = new Map<
@@ -333,33 +328,6 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       );
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
-    setDeleting(true);
-    setActionError(null);
-    try {
-      await deleteDoc(doc(db, 'vehicles', deleteTarget.id));
-      await recordAuditLog({
-        ownerId: deleteTarget.ownerId || userId,
-        actorRole,
-        action: 'DELETE',
-        module: 'Vehicles',
-        recordId: deleteTarget.id,
-        summary: `Removed vehicle ${deleteTarget.registrationNumber}`,
-      });
-      if (inspectVehicle?.id === deleteTarget.id) {
-        setInspectVehicle(null);
-      }
-      setSaveBanner(`Vehicle "${deleteTarget.registrationNumber}" removed.`);
-      setDeleteTarget(null);
-    } catch (error) {
-      setActionError(extractReadableFirestoreError(error, 'Delete Vehicle'));
-      setDeleteTarget(null);
-    } finally {
-      setDeleting(false);
     }
   };
 
@@ -601,16 +569,6 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                                 <Pencil className="w-4 h-4" />
                               </button>
                             )}
-                            {permissions.canDeleteRecords && (
-                              <button
-                                type="button"
-                                onClick={() => setDeleteTarget(v)}
-                                aria-label={`Delete ${v.registrationNumber}`}
-                                className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -697,15 +655,6 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                           className="px-3 py-1.5 min-h-[36px] text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
                         >
                           Edit
-                        </button>
-                      )}
-                      {permissions.canDeleteRecords && (
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(v)}
-                          className="px-3 py-1.5 min-h-[36px] text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg cursor-pointer"
-                        >
-                          Delete
                         </button>
                       )}
                     </div>
@@ -1166,16 +1115,6 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
         </div>
       )}
 
-      <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        title="Delete Vehicle"
-        description={`Remove vehicle ${deleteTarget?.registrationNumber || ''} from your fleet directory? Existing historical trips referencing this registration number will remain intact.`}
-        confirmLabel="Delete Vehicle"
-        destructive
-        busy={deleting}
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
     </div>
   );
 };

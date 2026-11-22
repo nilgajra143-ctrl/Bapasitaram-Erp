@@ -383,7 +383,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   };
 
   const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     try {
       await deleteDoc(doc(db, 'maintenanceRecords', deleteTarget.id));
@@ -631,12 +631,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                               <Pencil className="w-4 h-4" />
                             </button>
                           )}
-                          {permissions.canDeleteRecords && (
+                          {permissions.isAdmin && permissions.canDeleteRecords && (
                             <button
                               type="button"
                               onClick={() => setDeleteTarget(m)}
                               className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                               aria-label="Delete expense"
+                              title="Delete Expense (Admin Only)"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>

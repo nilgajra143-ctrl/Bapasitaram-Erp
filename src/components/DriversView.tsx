@@ -395,7 +395,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
   };
 
   const handleDeleteDriver = async () => {
-    if (!deleteDriverTarget) return;
+    if (!deleteDriverTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     try {
       await deleteDoc(doc(db, 'drivers', deleteDriverTarget.id));
@@ -417,7 +417,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
   };
 
   const handleDeletePayment = async () => {
-    if (!deletePaymentTarget) return;
+    if (!deletePaymentTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     try {
       await deleteDoc(doc(db, 'driverPayments', deletePaymentTarget.id));
@@ -651,11 +651,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
                                 <Pencil className="w-4 h-4" />
                               </button>
                             )}
-                            {permissions.canDeleteRecords && (
+                            {permissions.isAdmin && permissions.canDeleteRecords && (
                               <button
                                 type="button"
                                 onClick={() => setDeleteDriverTarget(d)}
                                 aria-label={`Delete ${d.driverName}`}
+                                title="Delete Driver (Admin Only)"
                                 className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1127,7 +1128,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
                           <th className="py-2 px-3">Type</th>
                           <th className="py-2 px-3">Mode / Ref</th>
                           <th className="py-2 px-3 text-right">Amount</th>
-                          {permissions.canDeleteRecords && <th className="py-2 px-3 text-right">Action</th>}
+                          {permissions.isAdmin && permissions.canDeleteRecords && <th className="py-2 px-3 text-right">Action</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1147,13 +1148,14 @@ export const DriversView: React.FC<DriversViewProps> = ({
                             <td className="py-2 px-3 text-right font-mono font-medium tabular-nums text-slate-900">
                               {formatINR(p.amount)}
                             </td>
-                            {permissions.canDeleteRecords && (
+                            {permissions.isAdmin && permissions.canDeleteRecords && (
                               <td className="py-2 px-3 text-right">
                                 <button
                                   type="button"
                                   onClick={() => setDeletePaymentTarget(p)}
                                   className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
                                   aria-label="Delete payment entry"
+                                  title="Delete Driver Payment (Admin Only)"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>

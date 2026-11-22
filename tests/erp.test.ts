@@ -3064,12 +3064,61 @@ test('Industrial Command Center visual redesign applies Deep Slate, Graphite, In
   assert.doesNotMatch(dashboardSrc, /window\.alert\(/);
 });
 
+test('Accidental deletion protection removes Vehicle Management delete action, disables permanent deletion for ordinary users across all modules, and preserves View & Edit', () => {
+  const vehiclesSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/VehiclesView.tsx'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/App.tsx'), 'utf8');
+  const tripsSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/TripHistoryView.tsx'), 'utf8');
+  const lrSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/LorryReceiptsView.tsx'), 'utf8');
+  const billingSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/BillingView.tsx'), 'utf8');
+  const partiesSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/PartiesView.tsx'), 'utf8');
+  const driversSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/DriversView.tsx'), 'utf8');
+  const expensesSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/ExpensesView.tsx'), 'utf8');
+  const importSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/ExcelImportView.tsx'), 'utf8');
+  const securitySrc = fs.readFileSync(path.join(ROOT_DIR, 'src/components/SecurityBackupView.tsx'), 'utf8');
 
+  // 1. Vehicle Management: ZERO Trash/Delete icons, buttons, or deleteDoc calls; View & Edit preserved
+  assert.doesNotMatch(vehiclesSrc, /\bTrash2\b/);
+  assert.doesNotMatch(vehiclesSrc, /\bdeleteDoc\b/);
+  assert.doesNotMatch(vehiclesSrc, /Delete Vehicle/);
+  assert.doesNotMatch(vehiclesSrc, /aria-label=\{`Delete /);
+  assert.match(vehiclesSrc, /openEditDrawer/);
+  assert.match(vehiclesSrc, /setInspectVehicle/);
+  assert.match(vehiclesSrc, /Ledger &amp; Trips/);
 
+  // 2. App RBAC: ordinary users NEVER receive canDeleteRecords: true
+  assert.match(appSrc, /canDeleteRecords:\s*isUserAdmin,/);
+  assert.doesNotMatch(appSrc, /canDeleteRecords:\s*isUserAdmin\s*\|\|\s*matched\.canDeleteRecords/);
 
+  // 3. Operational modules guard both UI and delete handlers with permissions.isAdmin && permissions.canDeleteRecords
+  assert.match(tripsSrc, /if \(!deleteTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.doesNotMatch(tripsSrc, /\{permissions\.canDeleteRecords && \(/);
+  assert.match(tripsSrc, /onEditTrip/);
 
+  assert.match(lrSrc, /const canDeleteLr = permissions\.isAdmin && permissions\.canDeleteRecords;/);
+  assert.match(lrSrc, /if \(!deleteTarget \|\| !canDeleteLr\) return;/);
 
+  assert.match(billingSrc, /if \(!deleteTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.doesNotMatch(billingSrc, /\{permissions\.canDeleteRecords && !/);
 
+  assert.match(partiesSrc, /if \(!deleteTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.match(partiesSrc, /if \(!deletePaymentTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.doesNotMatch(partiesSrc, /\{permissions\.canDeleteRecords && \(/);
+  assert.match(partiesSrc, /openEditDrawer/);
 
+  assert.match(driversSrc, /if \(!deleteDriverTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.match(driversSrc, /if \(!deletePaymentTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.doesNotMatch(driversSrc, /\{permissions\.canDeleteRecords &&/);
+  assert.match(driversSrc, /openEditDriver/);
 
+  assert.match(expensesSrc, /if \(!deleteTarget \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\) return;/);
+  assert.doesNotMatch(expensesSrc, /\{permissions\.canDeleteRecords && \(/);
+  assert.match(expensesSrc, /openEditDrawer/);
 
+  assert.match(importSrc, /if \(!deleteBatchTarget \|\| !isSuperAdmin \|\| !permissions\.isAdmin \|\| !permissions\.canDeleteRecords\)/);
+
+  // 4. SecurityBackupView locks canDeleteRecords off for ordinary users
+  assert.match(securitySrc, /canDeleteRecords:\s*newRole === 'admin',/);
+  assert.match(securitySrc, /if \(field === 'canDeleteRecords' && u\.role !== 'admin'\)/);
+  assert.match(securitySrc, /Delete Records \(Disabled for Ordinary Users\)/);
+  assert.match(securitySrc, /if \(!deleteUserTarget \|\| !isSuperAdmin\) return;/);
+});

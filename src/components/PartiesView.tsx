@@ -615,7 +615,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({
   };
 
   const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     setActionError(null);
     try {
@@ -643,7 +643,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({
   };
 
   const handleConfirmDeletePayment = async () => {
-    if (!deletePaymentTarget) return;
+    if (!deletePaymentTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     setActionError(null);
     try {
@@ -1062,11 +1062,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({
                                 <Pencil className="w-4 h-4" />
                               </button>
                             )}
-                            {permissions.canDeleteRecords && (
+                            {permissions.isAdmin && permissions.canDeleteRecords && (
                               <button
                                 type="button"
                                 onClick={() => setDeleteTarget(p)}
                                 aria-label={`Delete ${p.partyName}`}
+                                title="Delete Party (Admin Only)"
                                 className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1182,7 +1183,7 @@ export const PartiesView: React.FC<PartiesViewProps> = ({
                           Edit
                         </button>
                       )}
-                      {permissions.canDeleteRecords && (
+                      {permissions.isAdmin && permissions.canDeleteRecords && (
                         <button
                           type="button"
                           onClick={() => setDeleteTarget(p)}
@@ -1777,11 +1778,12 @@ export const PartiesView: React.FC<PartiesViewProps> = ({
                                 >
                                   <MessageCircle className="w-3.5 h-3.5" />
                                 </button>
-                                {permissions.canDeleteRecords && (
+                                {permissions.isAdmin && permissions.canDeleteRecords && (
                                   <button
                                     type="button"
                                     onClick={() => setDeletePaymentTarget(pp)}
                                     aria-label={`Delete payment ${pp.referenceNo || pp.paymentDate}`}
+                                    title="Delete Payment (Admin Only)"
                                     className="p-1 text-slate-400 hover:text-red-600 cursor-pointer"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />

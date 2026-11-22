@@ -469,7 +469,9 @@ export const ExcelImportView: React.FC<ExcelImportViewProps> = ({
   };
 
   const handleDeleteBatchArchive = async () => {
-    if (!deleteBatchTarget) return;
+    if (!deleteBatchTarget || !isSuperAdmin || !permissions.isAdmin || !permissions.canDeleteRecords) {
+      return;
+    }
     setDeletingBatch(true);
     try {
       const rowsToDelete = importedSheetRows.filter(
@@ -1131,7 +1133,7 @@ export const ExcelImportView: React.FC<ExcelImportViewProps> = ({
                       >
                         {archiveBatchFilter === b.id ? 'Showing Batch' : 'Filter Rows'}
                       </button>
-                      {isSuperAdmin && permissions.canDeleteRecords && (
+                      {isSuperAdmin && permissions.isAdmin && permissions.canDeleteRecords && (
                         <button
                           type="button"
                           onClick={() => setDeleteBatchTarget(b)}

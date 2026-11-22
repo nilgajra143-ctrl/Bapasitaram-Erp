@@ -233,7 +233,7 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
   };
 
   const handleConfirmDelete = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     try {
       await deleteDoc(doc(db, 'trips', deleteTarget.id));
@@ -596,12 +596,12 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
                               <Pencil className="w-4 h-4" />
                             </button>
                           )}
-                          {permissions.canDeleteRecords && (
+                          {permissions.isAdmin && permissions.canDeleteRecords && (
                             <button
                               type="button"
                               onClick={() => setDeleteTarget(t)}
                               aria-label={`Delete LR ${t.lrNumber}`}
-                              title="Delete Trip"
+                              title="Delete Trip (Admin Only)"
                               className="p-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -699,7 +699,7 @@ export const TripHistoryView: React.FC<TripHistoryViewProps> = ({
                         Edit
                       </button>
                     )}
-                    {permissions.canDeleteRecords && (
+                    {permissions.isAdmin && permissions.canDeleteRecords && (
                       <button
                         type="button"
                         onClick={() => setDeleteTarget(t)}

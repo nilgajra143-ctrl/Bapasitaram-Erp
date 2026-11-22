@@ -605,7 +605,7 @@ export const BillingView: React.FC<BillingViewProps> = ({
   };
 
   const handleDeleteBill = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !permissions.isAdmin || !permissions.canDeleteRecords) return;
     setDeleting(true);
     try {
       await deleteDoc(doc(db, 'bills', deleteTarget.id));
@@ -1012,12 +1012,13 @@ export const BillingView: React.FC<BillingViewProps> = ({
                             <Eye className="w-3.5 h-3.5" />
                             <span>View / Print</span>
                           </button>
-                          {permissions.canDeleteRecords && !(b.status === 'Paid' || b.status === 'Cancelled') && (
+                          {permissions.isAdmin && permissions.canDeleteRecords && !(b.status === 'Paid' || b.status === 'Cancelled') && (
                             <button
                               type="button"
                               onClick={() => setDeleteTarget(b)}
                               className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
                               aria-label="Delete bill"
+                              title="Delete Bill (Admin Only)"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>

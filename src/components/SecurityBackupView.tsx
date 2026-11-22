@@ -310,7 +310,7 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
         assignedDriverId: '',
         status: 'Active' as ErpUserStatus,
         canEditTrips: newRole === 'admin' ? true : newPerms.canEditTrips,
-        canDeleteRecords: newRole === 'admin' ? true : newPerms.canDeleteRecords,
+        canDeleteRecords: newRole === 'admin',
         canManageBilling: newRole === 'admin' ? true : newPerms.canManageBilling,
         canImportExcel: newRole === 'admin' ? true : newPerms.canImportExcel,
         canExportData: newRole === 'admin' ? true : newPerms.canExportData,
@@ -378,6 +378,11 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
       | 'canExportData'
       | 'canManageMasters'
   ) => {
+    if (!isSuperAdmin) return;
+    if (field === 'canDeleteRecords' && u.role !== 'admin') {
+      setUserError('Permanent deletion is permanently disabled for ordinary users (Admin only).');
+      return;
+    }
     setUserError(null);
     try {
       await updateDoc(doc(db, 'erpUsers', u.id), {
@@ -385,7 +390,7 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
         role: u.role,
         status: u.status,
         canEditTrips: field === 'canEditTrips' ? !u.canEditTrips : u.canEditTrips,
-        canDeleteRecords: field === 'canDeleteRecords' ? !u.canDeleteRecords : u.canDeleteRecords,
+        canDeleteRecords: u.role === 'admin' ? true : false,
         canManageBilling: field === 'canManageBilling' ? !u.canManageBilling : u.canManageBilling,
         canImportExcel: field === 'canImportExcel' ? !u.canImportExcel : u.canImportExcel,
         canExportData: field === 'canExportData' ? !u.canExportData : u.canExportData,
@@ -406,7 +411,7 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
   };
 
   const handleDeleteUser = async () => {
-    if (!deleteUserTarget) return;
+    if (!deleteUserTarget || !isSuperAdmin) return;
     setUserError(null);
     try {
       await deleteDoc(doc(db, 'erpUsers', deleteUserTarget.id));
@@ -730,7 +735,15 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
   };
 
   const handleCleanupExecute = async () => {
-    if (!cleanupConfirmMode || selectedCleanupItems.length === 0) return;
+    if (
+      !cleanupConfirmMode ||
+      selectedCleanupItems.length === 0 ||
+      !isSuperAdmin ||
+      !permissions.isAdmin ||
+      !permissions.canDeleteRecords
+    ) {
+      return;
+    }
     if (cleanupConfirmMode === 'delete' && !verifiedBackup) {
       setCleanupError('Create and verify a complete JSON backup before permanent deletion.');
       setCleanupConfirmMode(null);
@@ -1000,7 +1013,6 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
                           ['canExportData', 'Export Data'],
                           ['canManageMasters', 'Manage Vehicles/Parties/Drivers'],
                           ['canImportExcel', 'Import Excel'],
-                          ['canDeleteRecords', 'Delete Records'],
                         ] as const
                       ).map(([key, label]) => (
                         <label key={key} className="inline-flex items-center gap-2 cursor-pointer">
@@ -1013,6 +1025,13 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
                           <span>{label}</span>
                         </label>
                       ))}
+                      <span
+                        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500"
+                        title="Permanent record deletion is disabled for ordinary users across Trips, LR, Bills, Payments, Party Ledger, Vehicles, Drivers, and Expenses."
+                      >
+                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Delete Records (Disabled for Ordinary Users)</span>
+                      </span>
                     </div>
                     <p className="text-[11px] text-slate-500">
                       Assign specific vehicles or link a Driver profile in <span className="font-semibold text-slate-700">Expiry Alerts → Recipient Access Control</span> after creating the user.
@@ -1090,21 +1109,31 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
                                     ['canExportData', 'Export'],
                                     ['canDeleteRecords', 'Delete'],
                                   ] as const
-                                ).map(([field, label]) => (
-                                  <button
-                                    key={field}
-                                    type="button"
-                                    disabled={u.role === 'admin'}
-                                    onClick={() => handleTogglePermission(u, field)}
-                                    className={`px-2 py-1 rounded border text-[11px] font-medium cursor-pointer ${
-                                      u[field]
-                                        ? 'bg-slate-900 text-white border-slate-900'
-                                        : 'bg-white text-slate-500 border-slate-200'
-                                    } disabled:opacity-60`}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
+                                ).map(([field, label]) => {
+                                  const isLockedDeleteForEmployee =
+                                    field === 'canDeleteRecords' && u.role !== 'admin';
+                                  const effectiveEnabled = isLockedDeleteForEmployee ? false : u[field];
+                                  return (
+                                    <button
+                                      key={field}
+                                      type="button"
+                                      disabled={u.role === 'admin' || isLockedDeleteForEmployee}
+                                      title={
+                                        isLockedDeleteForEmployee
+                                          ? 'Permanent deletion is disabled for ordinary users (Admin only)'
+                                          : undefined
+                                      }
+                                      onClick={() => handleTogglePermission(u, field)}
+                                      className={`px-2 py-1 rounded border text-[11px] font-medium cursor-pointer ${
+                                        effectiveEnabled
+                                          ? 'bg-slate-900 text-white border-slate-900'
+                                          : 'bg-white text-slate-500 border-slate-200'
+                                      } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                    >
+                                      {isLockedDeleteForEmployee ? `${label} (Locked)` : label}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </td>
                             <td className="py-3 px-4 text-right">
@@ -1265,7 +1294,7 @@ export const SecurityBackupView: React.FC<SecurityBackupViewProps> = ({
           </div>
 
           {/* Admin-Only Safe Old & Test Data Audit / Cleanup */}
-          {isSuperAdmin && permissions.canDeleteRecords && (
+          {isSuperAdmin && permissions.isAdmin && permissions.canDeleteRecords && (
             <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 pb-4">
                 <div>

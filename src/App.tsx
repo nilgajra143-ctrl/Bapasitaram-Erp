@@ -585,7 +585,7 @@ function ErpAppContent() {
         isAdmin: isUserAdmin,
         isSuspended: matched.status === 'Suspended',
         canEditTrips: isUserAdmin || matched.canEditTrips,
-        canDeleteRecords: isUserAdmin || matched.canDeleteRecords,
+        canDeleteRecords: isUserAdmin,
         canManageBilling: isUserAdmin || matched.canManageBilling,
         canImportExcel: isUserAdmin || matched.canImportExcel,
         canExportData: isUserAdmin || matched.canExportData,

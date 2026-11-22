@@ -185,7 +185,7 @@ export const LorryReceiptsView: React.FC<LorryReceiptsViewProps> = ({
   const canCreateLr =
     permissions.isAdmin || permissions.canEditTrips || permissions.canManageMasters;
   const canEditLr = permissions.isAdmin;
-  const canDeleteLr = permissions.isAdmin;
+  const canDeleteLr = permissions.isAdmin && permissions.canDeleteRecords;
   const canManageBranding = permissions.isAdmin;
 
   const [activeTab, setActiveTab] = useState<'list' | 'branding'>('list');
