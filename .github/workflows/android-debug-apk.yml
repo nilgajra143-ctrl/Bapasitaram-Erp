@@ -2,6 +2,8 @@ name: Android Debug APK (Vivo Test)
 
 # Manual cloud build for immediate Vivo Android phone testing.
 # - Free on GitHub Actions ubuntu-latest (no paid services, no Android Studio on PC).
+# - Caches npm, node_modules, and Gradle caches/wrapper for fast repeat builds.
+# - Preserves strict deterministic npm ci lockfile resolution.
 # - Requires ZERO signing credentials or private keys.
 # - Keeps the compiled APK as a Private Workflow Artifact (never published).
 on:
@@ -24,10 +26,19 @@ jobs:
       - name: Checkout Private Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
+      - name: Setup Node.js 22 (With npm Cache)
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node22-modules-${{ hashFiles('package-lock.json') }}
 
       - name: Setup Java 21 (Required by Capacitor Android 8)
         uses: actions/setup-java@v4
@@ -40,8 +51,9 @@ jobs:
         with:
           packages: 'platforms;android-36 build-tools;36.0.0 platform-tools'
 
-      - name: Install Dependencies
-        run: npm install --no-audit --no-fund
+      - name: Install Dependencies (Deterministic Lockfile Resolution)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
 
       - name: Build Web ERP Bundle (dist/)
         run: npm run build:mobile
@@ -56,11 +68,27 @@ jobs:
       - name: Apply Vivo Camera, Gallery & WhatsApp Manifest Permissions
         run: node android-setup/prepare-android-manifest.mjs
 
+      - name: Cache Gradle Dependencies & Wrapper
+        id: cache-gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       - name: Compile Android Debug APK (Gradle)
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --no-daemon --build-cache
+
+      - name: Prune Transient Gradle Lock Files Before Cache Save
+        run: |
+          rm -f ~/.gradle/caches/modules-2/modules-2.lock
+          rm -rf ~/.gradle/caches/*/plugin-resolution/
 
       - name: Stage Debug APK & SHA-256 Checksum
         run: |

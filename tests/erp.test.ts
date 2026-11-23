@@ -3242,6 +3242,11 @@ test('GitHub Actions cloud APK workflows separate Debug and Release builds, requ
   assert.match(debugWf, /assembleDebug/);
   assert.match(debugWf, /prepare-android-manifest\.mjs/);
   assert.match(debugWf, /actions\/upload-artifact@v4/);
+  assert.match(debugWf, /cache:\s*'npm'/);
+  assert.match(debugWf, /path:\s*node_modules/);
+  assert.match(debugWf, /npm ci --no-audit --no-fund/);
+  assert.match(debugWf, /~\/\.gradle\/caches/);
+  assert.match(debugWf, /~\/\.gradle\/wrapper/);
   assert.doesNotMatch(debugWf, /secrets\./);
 
   // 2. Release workflow: separate manual workflow, defaults to unsigned_dry_run (no signing creds required yet),
@@ -3300,6 +3305,22 @@ test('GitHub Actions cloud APK workflows separate Debug and Release builds, requ
   assert.match(String(pkgLock.packages?.['node_modules/esbuild']?.version || ''), /^0\.(27|28)\./);
   assert.doesNotMatch(debugWf, /--force|--legacy-peer-deps/);
   assert.doesNotMatch(releaseWf, /--force|--legacy-peer-deps/);
+
+  // 7. Verify print-sha1.yml is standalone, uses ubuntu-latest + Java + Android SDK + keytool on debug.keystore, and prints only public SHA-1/SHA-256
+  const printShaWf = fs.readFileSync(
+    path.join(ROOT_DIR, '.github/workflows/print-sha1.yml'),
+    'utf8'
+  );
+  assert.match(printShaWf, /workflow_dispatch:/);
+  assert.match(printShaWf, /contents:\s*read/);
+  assert.match(printShaWf, /runs-on:\s*ubuntu-latest/);
+  assert.match(printShaWf, /actions\/setup-java@v4/);
+  assert.match(printShaWf, /android-actions\/setup-android@v3/);
+  assert.match(printShaWf, /debug\.keystore/);
+  assert.match(printShaWf, /keytool -list -v/);
+  assert.match(printShaWf, /SHA1\|SHA256/);
+  assert.doesNotMatch(printShaWf, /\$\{\{\s*secrets\./);
+  assert.doesNotMatch(printShaWf, /assembleDebug|assembleRelease/);
 });
 
 

@@ -1,0 +1,72 @@
+name: Print Android Debug SHA-1 & SHA-256 (keytool)
+
+# Lightweight standalone workflow (separate from the primary APK build flow).
+# - Runs on ubuntu-latest with Java 21 + Android SDK.
+# - Uses keytool to inspect the default Android SDK debug.keystore and print
+#   ONLY the public SHA-1 and SHA-256 certificate fingerprints in the run logs.
+# - Never prints passwords, private keys, or secrets.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: print-android-debug-sha1-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  print-debug-sha1:
+    name: Print Default debug.keystore SHA-1 & SHA-256
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Setup Java 21 Environment
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Verify keytool & Print Default debug.keystore SHA-1 / SHA-256
+        run: |
+          set -euo pipefail
+          KEYSTORE_DIR="$HOME/.android"
+          KEYSTORE_PATH="$KEYSTORE_DIR/debug.keystore"
+          mkdir -p "$KEYSTORE_DIR"
+
+          # Standard public Android SDK debug keystore alias & pass (passed via env, never echoed)
+          export ANDROID_DEBUG_PASS="android"
+          ANDROID_DEBUG_ALIAS="androiddebugkey"
+
+          if [ -f "$KEYSTORE_PATH" ]; then
+            echo "Found pre-existing default Android SDK debug.keystore on runner."
+          else
+            echo "Default debug.keystore not pre-present on fresh ubuntu-latest runner."
+            echo "Initializing standard Android debug.keystore with keytool..."
+            echo "Note: Because GitHub Actions runners are ephemeral, a newly initialized debug.keystore produces a new SHA-1 on each fresh run unless a reusable debug keystore secret is configured."
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype PKCS12 \
+              -storepass:env ANDROID_DEBUG_PASS \
+              -alias "$ANDROID_DEBUG_ALIAS" \
+              -keypass:env ANDROID_DEBUG_PASS \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10950 \
+              -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
+          fi
+
+          echo "=== Public Android Debug Certificate Fingerprints (SHA-1 & SHA-256) ==="
+          keytool -list -v \
+            -keystore "$KEYSTORE_PATH" \
+            -alias "$ANDROID_DEBUG_ALIAS" \
+            -storepass:env ANDROID_DEBUG_PASS \
+            | grep -E '^[[:space:]]*(Alias name|SHA1|SHA256):'
+          echo "=== End of Public Fingerprints (No private keys or passwords printed) ==="
+          unset ANDROID_DEBUG_PASS
