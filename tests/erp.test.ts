@@ -3292,6 +3292,14 @@ test('GitHub Actions cloud APK workflows separate Debug and Release builds, requ
 
   const mergedTwice = mergeAndroidManifestPermissions(mergedOnce, templateManifestXml);
   assert.equal(mergedTwice, mergedOnce);
+
+  // 6. Verify esbuild satisfies Vite 8 peerOptional (^0.27.0 || ^0.28.0) and workflows never use --force/--legacy-peer-deps
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+  const pkgLock = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package-lock.json'), 'utf8'));
+  assert.match(String(pkgJson.devDependencies.esbuild || ''), /^\^0\.(27|28)\./);
+  assert.match(String(pkgLock.packages?.['node_modules/esbuild']?.version || ''), /^0\.(27|28)\./);
+  assert.doesNotMatch(debugWf, /--force|--legacy-peer-deps/);
+  assert.doesNotMatch(releaseWf, /--force|--legacy-peer-deps/);
 });
 
 
